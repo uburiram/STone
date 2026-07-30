@@ -204,6 +204,9 @@
                     <span id="transactionCount" class="text-xs font-semibold bg-gray-100 px-2.5 py-2 rounded-xl text-gray-600 whitespace-nowrap">0 รายการ</span>
                 </div>
                 <div id="transactionList" class="space-y-2 max-h-96 overflow-y-auto pr-1"></div>
+                <div id="loadMoreHistoryContainer" class="text-center pt-2 hidden">
+                    <button onclick="loadMoreHistory()" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-xl font-medium">โหลดเพิ่มเติม...</button>
+                </div>
             </div>
 
             <!-- Tab 2: Category Report -->
@@ -213,6 +216,9 @@
                     <button onclick="renderCategoryReport('expense')" id="catReportBtn-expense" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-600">รายจ่าย</button>
                 </div>
                 <div id="categoryReportList" class="space-y-2 max-h-96 overflow-y-auto pr-1"></div>
+                <div id="loadMoreReportContainer" class="text-center pt-2 hidden">
+                    <button onclick="loadMoreReport()" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-xl font-medium">โหลดเพิ่มเติม...</button>
+                </div>
             </div>
 
             <!-- Tab 3: Management -->
@@ -227,9 +233,19 @@
                             <button onclick="setManagerType('expense')" id="mgrType-expense" class="px-2.5 py-1 text-[11px] rounded-md font-semibold text-gray-600 transition-all">รายจ่าย</button>
                         </div>
                     </div>
-                    <div class="flex gap-2 mb-3">
-                        <input type="text" id="newCatName" placeholder="เพิ่มหมวดหมู่ใหม่..." class="flex-1 text-xs border border-gray-300 rounded-xl px-3 py-2 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500">
-                        <button onclick="addNewCategory()" class="bg-brand-600 hover:bg-brand-700 text-white text-xs px-3.5 py-2 rounded-xl font-medium shadow-sm transition-all">+ เพิ่มหมวด</button>
+                    <div class="space-y-2 mb-3">
+                        <input type="text" id="newCatName" placeholder="เพิ่มหมวดหมู่ใหม่..." class="w-full text-xs border border-gray-300 rounded-xl px-3 py-2 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <div class="flex items-center gap-3 text-xs pt-1">
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input type="checkbox" id="newCatIsMaterial" class="rounded text-brand-500 focus:ring-brand-500">
+                                <span class="text-gray-600">เป็นหมวดวัตถุดิบ (เลือกจากลิสต์)</span>
+                            </label>
+                            <label class="flex items-center gap-1.5 cursor-pointer">
+                                <input type="checkbox" id="newCatIsEquipment" class="rounded text-brand-500 focus:ring-brand-500">
+                                <span class="text-gray-600">เป็นหมวดอุปกรณ์ (เลือกจากลิสต์)</span>
+                            </label>
+                        </div>
+                        <button onclick="addNewCategory()" class="w-full bg-brand-600 hover:bg-brand-700 text-white text-xs py-2 rounded-xl font-medium shadow-sm transition-all">+ เพิ่มหมวดหมู่</button>
                     </div>
                     <div id="fullCategoryTree" class="space-y-2.5 max-h-80 overflow-y-auto pr-1"></div>
                 </div>
@@ -249,19 +265,61 @@
                     <div id="materialItemsList" class="flex flex-wrap gap-1.5 mt-2 max-h-32 overflow-y-auto"></div>
                 </div>
                 
-                <!-- ส่วน Export Data -->
-                <div class="border-t pt-4 mt-4">
+                <!-- ส่วน Export/Import Data -->
+                <div class="border-t pt-4 mt-4 space-y-2">
                     <h4 class="text-xs font-bold text-gray-800 mb-2 flex items-center gap-1.5">
                         <i class="fa-solid fa-database text-gray-700"></i> การจัดการข้อมูล
                     </h4>
-                    <button onclick="exportDataToJSON()" class="w-full py-2.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-xl font-bold text-xs border border-blue-200 transition-all flex items-center justify-center gap-2">
-                        <i class="fa-solid fa-file-export"></i> ส่งออกข้อมูล (Backup JSON)
-                    </button>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="exportDataToJSON()" class="py-2.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-xl font-bold text-xs border border-blue-200 transition-all flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-file-export"></i> ส่งออกข้อมูล (Backup)
+                        </button>
+                        <label class="py-2.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl font-bold text-xs border border-emerald-200 transition-all flex items-center justify-center gap-2 cursor-pointer">
+                            <i class="fa-solid fa-file-import"></i> นำเข้าข้อมูล (Import)
+                            <input type="file" id="importFileJson" accept=".json" onchange="importDataFromJSON(event)" class="hidden">
+                        </label>
+                    </div>
                 </div>
             </div>
         </div>
 
     </main>
+
+    <!-- Custom Confirm Modal -->
+    <div id="customConfirmModal" class="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center hidden p-4">
+        <div class="bg-white w-full max-w-sm rounded-3xl p-5 shadow-2xl space-y-4 text-center">
+            <div id="confirmModalIconContainer" class="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-xl">
+                <i id="confirmModalIcon" class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <div>
+                <h3 id="confirmModalTitle" class="font-bold text-base text-gray-800">ยืนยันการทำรายการ</h3>
+                <p id="confirmModalDesc" class="text-xs text-gray-500 mt-1">คุณต้องการดำเนินการนี้ใช่หรือไม่?</p>
+            </div>
+            <div class="flex gap-2 pt-2">
+                <button id="confirmModalBtnCancel" class="flex-1 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-600 hover:bg-gray-50">ยกเลิก</button>
+                <button id="confirmModalBtnOk" class="flex-1 py-2.5 rounded-xl bg-brand-600 text-white text-xs font-semibold hover:bg-brand-700 shadow-md">ยืนยัน</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Input Modal (Replacing prompt()) -->
+    <div id="customInputModal" class="fixed inset-0 bg-black/60 z-[115] flex items-center justify-center hidden p-4">
+        <div class="bg-white w-full max-w-sm rounded-3xl p-5 shadow-2xl space-y-4">
+            <div class="w-12 h-12 bg-brand-100 text-brand-600 rounded-full flex items-center justify-center mx-auto text-xl">
+                <i class="fa-solid fa-pen"></i>
+            </div>
+            <div class="text-center">
+                <h3 id="inputModalTitle" class="font-bold text-base text-gray-800">แก้ไขข้อมูล</h3>
+            </div>
+            <div>
+                <input type="text" id="customInputField" class="w-full text-xs border border-gray-300 rounded-xl px-3 py-2.5 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500">
+            </div>
+            <div class="flex gap-2 pt-2">
+                <button id="inputModalBtnCancel" class="flex-1 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-600 hover:bg-gray-50">ยกเลิก</button>
+                <button id="inputModalBtnOk" class="flex-1 py-2.5 rounded-xl bg-brand-600 text-white text-xs font-semibold hover:bg-brand-700 shadow-md">บันทึก</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Sync Prompt Modal -->
     <div id="syncPromptModal" class="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center hidden p-4">
@@ -276,6 +334,42 @@
             <div class="flex gap-2 pt-2">
                 <button onclick="window.confirmSyncData(false)" class="flex-1 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-600 hover:bg-gray-50">ไว้ทีหลัง</button>
                 <button onclick="window.confirmSyncData(true)" class="flex-1 py-2.5 rounded-xl bg-brand-600 text-white text-xs font-semibold hover:bg-brand-700 shadow-md">ซิงค์ข้อมูลเลย</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Guest Merge Modal -->
+    <div id="guestMergeModal" class="fixed inset-0 bg-black/60 z-[95] flex items-center justify-center hidden p-4">
+        <div class="bg-white w-full max-w-md rounded-3xl p-5 shadow-2xl space-y-4">
+            <div class="w-12 h-12 bg-brand-100 text-brand-600 rounded-full flex items-center justify-center mx-auto text-xl">
+                <i class="fa-solid fa-shuffle"></i>
+            </div>
+            <div class="text-center">
+                <h3 class="font-bold text-base text-gray-800">พบข้อมูลในเครื่อง (Guest)</h3>
+                <p class="text-xs text-gray-500 mt-1">คุณมีรายการบันทึกอยู่ในเครื่องนี้ ต้องการซิงค์รวมกับบัญชี Cloud หรือจะเลือกใช้งานอย่างไรดี?</p>
+            </div>
+            <div class="space-y-2 pt-2 text-xs">
+                <button onclick="resolveGuestDataConflict('merge')" class="w-full py-3 px-4 rounded-xl bg-brand-600 text-white font-semibold hover:bg-brand-700 shadow-sm text-left flex items-center justify-between">
+                    <div>
+                        <div class="font-bold">รวมข้อมูลทั้งสองฝั่ง</div>
+                        <div class="text-[10px] text-brand-100">นำข้อมูลในเครื่องนี้ไปเพิ่มรวมกับบน Cloud</div>
+                    </div>
+                    <i class="fa-solid fa-plus-circle text-lg"></i>
+                </button>
+                <button onclick="resolveGuestDataConflict('cloud')" class="w-full py-3 px-4 rounded-xl bg-gray-100 text-gray-800 font-semibold hover:bg-gray-200 text-left flex items-center justify-between">
+                    <div>
+                        <div class="font-bold">ใช้ข้อมูลบน Cloud เท่านั้น</div>
+                        <div class="text-[10px] text-gray-500">ล้างข้อมูลในเครื่องนี้แล้วดึงจาก Cloud มาแทน</div>
+                    </div>
+                    <i class="fa-solid fa-cloud text-lg text-blue-500"></i>
+                </button>
+                <button onclick="resolveGuestDataConflict('local')" class="w-full py-3 px-4 rounded-xl bg-rose-50 text-rose-700 font-semibold hover:bg-rose-100 text-left flex items-center justify-between border border-rose-200">
+                    <div>
+                        <div class="font-bold">อัปโหลดข้อมูลเครื่องนี้ทับ Cloud</div>
+                        <div class="text-[10px] text-rose-500">ใช้ข้อมูลในเครื่องนี้เป็นหลักแทนที่บน Cloud</div>
+                    </div>
+                    <i class="fa-solid fa-triangle-exclamation text-lg text-rose-500"></i>
+                </button>
             </div>
         </div>
     </div>
@@ -421,12 +515,11 @@
         <span id="toastMsg">บันทึกเรียบร้อย</span>
     </div>
 
-    <!-- Firebase v12 Module Script -->
+    <!-- Firebase v10.12.2 Module Script -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
-        // เปลี่ยนแปลง: นำเข้าเครื่องมือสำหรับ Redirect และการจัดการ Session
-        import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+        import { getFirestore, collection, doc, getDoc, setDoc, updateDoc, deleteDoc, getDocs, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyAPWL6-lCNacvrVT3ap1YUAe6emoL74Rj8",
@@ -443,45 +536,77 @@
         const db = getFirestore(app);
         const googleProvider = new GoogleAuthProvider();
 
-        let currentUser = null;
+        googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-        // เปลี่ยนแปลง: เช็คสถานะตอนเด้งกลับมาจากการ Redirect
+        let currentUser = null;
+        window.unsubTransactions = null;
+        window.unsubSettings = null;
+        let pendingGuestData = null;
+
         getRedirectResult(auth).then((result) => {
             if (result && result.user) {
                 window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + result.user.displayName);
             }
         }).catch((error) => {
-            console.error("Redirect Auth Error:", error);
-            // ดักจับ Error: missing-initial-state เพื่อไม่ให้แสดงแจ้งเตือนรกหูรกตาผู้ใช้
-            if (error.code === 'auth/missing-initial-state') {
-                console.warn('เกิดปัญหาเกี่ยวกับการอ่าน Session Storage ของ WebView - กรุณาเปิดการตั้งค่า DOM Storage ใน APK');
-            } else {
-                alert('เกิดข้อผิดพลาดในการลงชื่อเข้าใช้: ' + error.message);
+            if (error.code !== 'auth/missing-initial-state') {
+                console.error("Redirect Auth Error:", error);
             }
         });
 
-        // เปลี่ยนแปลง: ปรับปรุงฟังก์ชัน Login ให้เหมาะสำหรับ WebView/APK
         window.loginGoogle = async function() {
             try {
-                // บังคับให้จดจำแบบ Local ป้องกันเซสชั่นหลุดในแอป
                 await setPersistence(auth, browserLocalPersistence);
-                // เปลี่ยนจาก signInWithPopup เป็น signInWithRedirect 
-                await signInWithRedirect(auth, googleProvider);
+                const isWebView = /(iPhone|iPod|iPad).*AppleWebKit(?!.*Safari)/i.test(navigator.userAgent) || 
+                                  /Android.*Version\/[0-9].[0-9]/.test(navigator.userAgent) ||
+                                  /wv/.test(navigator.userAgent);
+                
+                if (isWebView) {
+                    await signInWithRedirect(auth, googleProvider);
+                } else {
+                    try {
+                        const result = await signInWithPopup(auth, googleProvider);
+                        window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + result.user.displayName);
+                    } catch (popupError) {
+                        if (popupError.code === 'auth/popup-blocked') {
+                            await signInWithRedirect(auth, googleProvider);
+                        } else if (popupError.code !== 'auth/popup-closed-by-user') {
+                            throw popupError;
+                        }
+                    }
+                }
             } catch (error) {
-                console.error("Login initiation failed:", error);
-                alert('เกิดข้อผิดพลาดในการเปิดหน้าลงชื่อเข้าใช้: ' + error.message);
+                console.error("Login failed:", error);
+                alert('เกิดข้อผิดพลาดในการลงชื่อเข้าใช้: ' + error.message);
             }
         };
 
         window.logoutGoogle = async function() {
-            if (confirm('คุณต้องการออกจากระบบใช่หรือไม่? (ข้อมูลในเครื่องจะยังคงอยู่)')) {
+            window.showConfirmModal("ยืนยันการออกจากระบบ", "ข้อมูลของบัญชีนี้จะถูกลบออกจากเครื่องเพื่อความปลอดภัย และระบบจะสลับเป็นโหมดใช้งานทั่วไป", async () => {
                 try {
+                    if (window.unsubTransactions) { window.unsubTransactions(); window.unsubTransactions = null; }
+                    if (window.unsubSettings) { window.unsubSettings(); window.unsubSettings = null; }
+                    
                     await signOut(auth);
+                    
+                    localStorage.removeItem('somtumAppData');
+                    localStorage.removeItem('somtumLastSyncedTimestamp');
+                    localStorage.removeItem('somtumHasUnsyncedData');
+                    localStorage.removeItem('somtumDataOwnerUid');
+
+                    window.appData = {
+                        transactions: [],
+                        categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
+                        materials: [...window.DEFAULT_MATERIALS],
+                        equipments: [...window.DEFAULT_EQUIPMENTS],
+                        customGoal: null
+                    };
+
+                    window.refreshDashboard();
                     window.showToast('ออกจากระบบแล้ว');
                 } catch (error) {
                     console.error("Logout failed:", error);
                 }
-            }
+            });
         };
 
         onAuthStateChanged(auth, async (user) => {
@@ -499,7 +624,18 @@
                 btnLogin.classList.add('hidden');
                 btnLogout.classList.remove('hidden');
 
-                window.checkAndSyncCloudData(false);
+                const lastOwnerUid = localStorage.getItem('somtumDataOwnerUid');
+                const localTransactions = window.appData.transactions || [];
+
+                if (lastOwnerUid === user.uid) {
+                    window.initFirestoreListeners();
+                } else if (localTransactions.length > 0) {
+                    pendingGuestData = JSON.parse(JSON.stringify(window.appData));
+                    document.getElementById('guestMergeModal').classList.remove('hidden');
+                } else {
+                    localStorage.setItem('somtumDataOwnerUid', user.uid);
+                    window.initFirestoreListeners();
+                }
             } else {
                 avatar.src = 'https://cdn-icons-png.flaticon.com/512/847/847969.png';
                 nameElem.innerText = 'ผู้ใช้งานทั่วไป (ยังไม่ได้ล็อกอิน)';
@@ -510,6 +646,187 @@
                 document.getElementById('btnSyncNow').classList.add('hidden');
             }
         });
+
+        window.resolveGuestDataConflict = async function(action) {
+            document.getElementById('guestMergeModal').classList.add('hidden');
+            if (!currentUser) return;
+
+            if (action === 'merge') {
+                window.showToast("กำลังนำเข้าข้อมูล...");
+                const settingsRef = doc(db, "users", currentUser.uid, "meta", "settings");
+                const cloudSnap = await getDoc(settingsRef);
+                let cloudSettings = cloudSnap.exists() ? cloudSnap.data() : null;
+
+                let mergedCategories = JSON.parse(JSON.stringify(window.appData.categories));
+                let mergedMaterials = [...window.appData.materials];
+                let mergedEquipments = [...window.appData.equipments];
+                let mergedGoal = window.appData.customGoal;
+
+                if (cloudSettings) {
+                    if (cloudSettings.materials) {
+                        mergedMaterials = Array.from(new Set([...cloudSettings.materials, ...mergedMaterials]));
+                    }
+                    if (cloudSettings.equipments) {
+                        mergedEquipments = Array.from(new Set([...cloudSettings.equipments, ...mergedEquipments]));
+                    }
+                    ['income', 'expense'].forEach(type => {
+                        if (cloudSettings.categories && cloudSettings.categories[type]) {
+                            const cloudCats = cloudSettings.categories[type];
+                            cloudCats.forEach(cloudCat => {
+                                let localCat = mergedCategories[type].find(c => c.name.trim().toLowerCase() === cloudCat.name.trim().toLowerCase());
+                                if (localCat) {
+                                    if (cloudCat.subs) {
+                                        localCat.subs = Array.from(new Set([...(localCat.subs || []), ...cloudCat.subs]));
+                                    }
+                                    if (cloudCat.flags) {
+                                        localCat.flags = localCat.flags || {};
+                                        if (cloudCat.flags.isMaterialCategory) localCat.flags.isMaterialCategory = true;
+                                        if (cloudCat.flags.isEquipmentCategory) localCat.flags.isEquipmentCategory = true;
+                                    }
+                                } else {
+                                    mergedCategories[type].push(cloudCat);
+                                }
+                            });
+                        }
+                    });
+                    if (!mergedGoal && cloudSettings.customGoal) {
+                        mergedGoal = cloudSettings.customGoal;
+                    }
+                }
+
+                window.appData.categories = mergedCategories;
+                window.appData.materials = mergedMaterials;
+                window.appData.equipments = mergedEquipments;
+                window.appData.customGoal = mergedGoal;
+
+                const localTx = pendingGuestData.transactions || [];
+                let batch = writeBatch(db);
+                let count = 0;
+                for (const tx of localTx) {
+                    const txRef = doc(db, "users", currentUser.uid, "transactions", tx.id);
+                    batch.set(txRef, tx, { merge: true });
+                    count++;
+                    if (count >= 400) {
+                        await batch.commit();
+                        batch = writeBatch(db);
+                        count = 0;
+                    }
+                }
+                if (count > 0) {
+                    await batch.commit();
+                }
+
+                await setDoc(settingsRef, {
+                    categories: window.appData.categories,
+                    materials: window.appData.materials,
+                    equipments: window.appData.equipments,
+                    customGoal: window.appData.customGoal,
+                    updatedAt: new Date().toISOString()
+                }, { merge: true });
+
+                window.showToast('รวมข้อมูลสำเร็จ');
+            } else if (action === 'local') {
+                window.showToast("กำลังนำเข้าข้อมูล...");
+                const settingsRef = doc(db, "users", currentUser.uid, "meta", "settings");
+                await setDoc(settingsRef, {
+                    categories: pendingGuestData.categories,
+                    materials: pendingGuestData.materials,
+                    equipments: pendingGuestData.equipments,
+                    customGoal: pendingGuestData.customGoal,
+                    updatedAt: new Date().toISOString()
+                });
+                const txCollRef = collection(db, "users", currentUser.uid, "transactions");
+                const snap = await getDocs(txCollRef);
+                
+                let batch = writeBatch(db);
+                let count = 0;
+                for (const d of snap.docs) {
+                    batch.delete(d.ref);
+                    count++;
+                    if (count >= 400) {
+                        await batch.commit();
+                        batch = writeBatch(db);
+                        count = 0;
+                    }
+                }
+                if (count > 0) {
+                    await batch.commit();
+                }
+
+                batch = writeBatch(db);
+                count = 0;
+                for (const tx of (pendingGuestData.transactions || [])) {
+                    const txRef = doc(db, "users", currentUser.uid, "transactions", tx.id);
+                    batch.set(txRef, tx);
+                    count++;
+                    if (count >= 400) {
+                        await batch.commit();
+                        batch = writeBatch(db);
+                        count = 0;
+                    }
+                }
+                if (count > 0) {
+                    await batch.commit();
+                }
+                window.showToast('อัปโหลดข้อมูลเครื่องทับ Cloud เรียบร้อย');
+            } else {
+                localStorage.removeItem('somtumAppData');
+                window.appData = {
+                    transactions: [],
+                    categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
+                    materials: [...window.DEFAULT_MATERIALS],
+                    equipments: [...window.DEFAULT_EQUIPMENTS],
+                    customGoal: null
+                };
+            }
+            
+            localStorage.setItem('somtumDataOwnerUid', currentUser.uid);
+            pendingGuestData = null;
+            window.initFirestoreListeners();
+        };
+
+        window.initFirestoreListeners = function() {
+            if (!currentUser) return;
+            if (window.unsubTransactions) { window.unsubTransactions(); window.unsubTransactions = null; }
+            if (window.unsubSettings) { window.unsubSettings(); window.unsubSettings = null; }
+            localStorage.setItem('somtumDataOwnerUid', currentUser.uid);
+            
+            const settingsRef = doc(db, "users", currentUser.uid, "meta", "settings");
+            window.unsubSettings = onSnapshot(settingsRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    if (data.categories) window.appData.categories = data.categories;
+                    if (data.materials) window.appData.materials = data.materials;
+                    if (data.equipments) window.appData.equipments = data.equipments;
+                    if (data.customGoal !== undefined) window.appData.customGoal = data.customGoal;
+                    window.saveLocalOnly();
+                    window.refreshDashboard();
+                } else {
+                    setDoc(settingsRef, {
+                        categories: window.appData.categories,
+                        materials: window.appData.materials,
+                        equipments: window.appData.equipments,
+                        customGoal: window.appData.customGoal,
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+            });
+
+            const txCollRef = collection(db, "users", currentUser.uid, "transactions");
+            window.unsubTransactions = onSnapshot(txCollRef, (querySnap) => {
+                const txs = [];
+                querySnap.forEach((d) => {
+                    txs.push(d.data());
+                });
+                window.appData.transactions = txs;
+                window.saveLocalOnly();
+                window.refreshDashboard();
+                window.updateSyncUI(true);
+            }, (error) => {
+                console.error("Transactions snapshot error:", error);
+                window.updateSyncUI(false);
+            });
+        };
 
         window.updateSyncUI = function(isSynced) {
             const statusElem = document.getElementById('userSyncText');
@@ -524,115 +841,107 @@
                 btnSync.classList.add('hidden');
                 localStorage.setItem('somtumHasUnsyncedData', 'false');
             } else {
-                statusElem.innerText = 'มีข้อมูลในเครื่องยังไม่ได้ซิงค์ขึ้น Cloud';
+                statusElem.innerText = 'มีข้อมูลรอซิงค์ขึ้น Cloud...';
                 badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-amber-500 border-2 border-white rounded-full';
                 btnSync.classList.remove('hidden');
                 localStorage.setItem('somtumHasUnsyncedData', 'true');
             }
         };
 
-        window.checkAndSyncCloudData = async function(forceDirectSync = false) {
+        window.checkAndSyncCloudData = async function(forcePrompt = false) {
             if (!currentUser) return;
+            window.showToast('กำลังซิงค์ข้อมูล...');
+            try {
+                const settingsRef = doc(db, "users", currentUser.uid, "meta", "settings");
+                await setDoc(settingsRef, {
+                    categories: window.appData.categories,
+                    materials: window.appData.materials,
+                    equipments: window.appData.equipments,
+                    customGoal: window.appData.customGoal,
+                    updatedAt: new Date().toISOString()
+                }, { merge: true });
 
-            const hasUnsynced = localStorage.getItem('somtumHasUnsyncedData') === 'true';
-
-            if (forceDirectSync) {
-                await window.pushDataToFirestore();
-                return;
-            }
-
-            if (hasUnsynced) {
-                document.getElementById('syncPromptModal').classList.remove('hidden');
-            } else {
-                await window.pullDataFromFirestore();
+                for (const tx of (window.appData.transactions || [])) {
+                    const txRef = doc(db, "users", currentUser.uid, "transactions", tx.id);
+                    await setDoc(txRef, tx, { merge: true });
+                }
+                window.updateSyncUI(true);
+                window.showToast('ซิงค์ข้อมูลสำเร็จ');
+            } catch (e) {
+                console.error("Sync error:", e);
+                window.showToast('ซิงค์ข้อมูลล้มเหลว', 'error');
             }
         };
 
-        window.confirmSyncData = async function(shouldSync) {
+        window.confirmSyncData = function(shouldSync) {
             document.getElementById('syncPromptModal').classList.add('hidden');
             if (shouldSync) {
-                await window.pushDataToFirestore();
-            } else {
-                window.updateSyncUI(false);
-                window.showToast('เก็บข้อมูลไว้ในเครื่องชั่วคราว');
+                window.checkAndSyncCloudData(true);
             }
         };
 
-        window.pushDataToFirestore = async function() {
-            if (!currentUser) return;
-            try {
-                const userDocRef = doc(db, "users", currentUser.uid);
-                
-                const docSnap = await getDoc(userDocRef);
-                if (docSnap.exists()) {
-                    const cloudData = docSnap.data();
-                    const cloudUpdatedAt = cloudData.updatedAt ? new Date(cloudData.updatedAt).getTime() : 0;
-                    const lastLocalSyncedAt = Number(localStorage.getItem('somtumLastSyncedTimestamp') || 0);
-
-                    if (cloudUpdatedAt > lastLocalSyncedAt) {
-                        const confirmOverwrite = confirm("ข้อมูลบนคลาวด์ใหม่กว่า การซิงค์นี้จะเขียนทับ ต้องการดำเนินการต่อหรือไม่");
-                        if (!confirmOverwrite) {
-                            window.showToast('ยกเลิกการซิงค์ข้อมูล', 'error');
-                            return;
-                        }
-                    }
-                }
-
-                const nowIso = new Date().toISOString();
-                await setDoc(userDocRef, {
-                    appData: window.appData,
-                    updatedAt: nowIso
-                });
-
-                localStorage.setItem('somtumLastSyncedTimestamp', new Date(nowIso).getTime().toString());
-                window.updateSyncUI(true);
-                window.showToast('ซิงค์ข้อมูลขึ้น Cloud เรียบร้อย');
-            } catch (error) {
-                console.error("Error saving to Firestore:", error);
-                window.updateSyncUI(false);
-                window.showToast('ซิงค์ข้อมูลล้มเหลว ตรวจสอบการเชื่อมต่อ', 'error');
-            }
-        };
-
-        window.pullDataFromFirestore = async function() {
-            if (!currentUser) return;
-            try {
-                const userDocRef = doc(db, "users", currentUser.uid);
-                const docSnap = await getDoc(userDocRef);
-
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    const cloudData = data.appData;
-                    if (cloudData) {
-                        window.appData = cloudData;
-                        localStorage.setItem('somtumAppData', JSON.stringify(window.appData));
-                        if (data.updatedAt) {
-                            localStorage.setItem('somtumLastSyncedTimestamp', new Date(data.updatedAt).getTime().toString());
-                        }
-                        window.refreshDashboard();
-                    }
-                } else {
-                    await window.pushDataToFirestore();
-                }
-                window.updateSyncUI(true);
-            } catch (error) {
-                console.error("Error pulling from Firestore:", error);
-                window.updateSyncUI(false);
-                window.showToast('ดึงข้อมูลจาก Cloud ล้มเหลว', 'error');
-            }
-        };
-
+        let syncTimer = null;
         window.syncDataToCloud = function() {
+            window.saveLocalOnly();
+            if (!currentUser) {
+                localStorage.setItem('somtumHasUnsyncedData', 'true');
+                return;
+            }
+            window.updateSyncUI(false);
+            if (syncTimer) clearTimeout(syncTimer);
+            syncTimer = setTimeout(async () => {
+                try {
+                    const settingsRef = doc(db, "users", currentUser.uid, "meta", "settings");
+                    await setDoc(settingsRef, {
+                        categories: window.appData.categories,
+                        materials: window.appData.materials,
+                        equipments: window.appData.equipments,
+                        customGoal: window.appData.customGoal,
+                        updatedAt: new Date().toISOString()
+                    }, { merge: true });
+                    window.updateSyncUI(true);
+                } catch (e) {
+                    console.error("Debounced sync error:", e);
+                }
+            }, 800);
+        };
+
+        window.saveTransactionToFirestore = async function(txObj) {
+            window.saveLocalOnly();
+            if (!currentUser) {
+                localStorage.setItem('somtumHasUnsyncedData', 'true');
+                return;
+            }
+            window.updateSyncUI(false);
+            try {
+                const txRef = doc(db, "users", currentUser.uid, "transactions", txObj.id);
+                await setDoc(txRef, txObj);
+                window.updateSyncUI(true);
+            } catch (e) {
+                console.error("Save tx error:", e);
+            }
+        };
+
+        window.deleteTransactionFromFirestore = async function(txId) {
+            window.saveLocalOnly();
+            if (!currentUser) {
+                localStorage.setItem('somtumHasUnsyncedData', 'true');
+                return;
+            }
+            window.updateSyncUI(false);
+            try {
+                const txRef = doc(db, "users", currentUser.uid, "transactions", txId);
+                await deleteDoc(txRef);
+                window.updateSyncUI(true);
+            } catch (e) {
+                console.error("Delete tx error:", e);
+            }
+        };
+
+        window.saveLocalOnly = function() {
             try {
                 localStorage.setItem('somtumAppData', JSON.stringify(window.appData));
-                if (currentUser) {
-                    window.pushDataToFirestore();
-                } else {
-                    localStorage.setItem('somtumHasUnsyncedData', 'true');
-                }
-            } catch (e) {
-                console.error("Local save failed", e);
-            }
+            } catch (e) {}
         };
     </script>
 
@@ -697,6 +1006,9 @@
         let _editTxIdTemp = null; 
         let currentReportTab = 'income';
 
+        let historyDisplayLimit = 50;
+        let reportDisplayLimit = 50;
+
         window.finishLoading = function() {
             const overlay = document.getElementById('loadingOverlay');
             if(overlay) {
@@ -713,6 +1025,57 @@
             toast.style.opacity = '1';
             setTimeout(() => toast.style.opacity = '0', 3000);
         }
+
+        window.showConfirmModal = function(title, desc, onConfirmCallback) {
+            const modal = document.getElementById('customConfirmModal');
+            document.getElementById('confirmModalTitle').innerText = title;
+            document.getElementById('confirmModalDesc').innerText = desc;
+            
+            const btnOk = document.getElementById('confirmModalBtnOk');
+            const btnCancel = document.getElementById('confirmModalBtnCancel');
+
+            const newBtnOk = btnOk.cloneNode(true);
+            const newBtnCancel = btnCancel.cloneNode(true);
+            btnOk.parentNode.replaceChild(newBtnOk, btnOk);
+            btnCancel.parentNode.replaceChild(newBtnCancel, btnCancel);
+
+            newBtnOk.onclick = () => {
+                modal.classList.add('hidden');
+                if (onConfirmCallback) onConfirmCallback();
+            };
+            newBtnCancel.onclick = () => {
+                modal.classList.add('hidden');
+            };
+
+            modal.classList.remove('hidden');
+        };
+
+        window.showInputModal = function(title, defaultValue, onConfirmCallback) {
+            const modal = document.getElementById('customInputModal');
+            document.getElementById('inputModalTitle').innerText = title;
+            const inputField = document.getElementById('customInputField');
+            inputField.value = defaultValue || '';
+            
+            const btnOk = document.getElementById('inputModalBtnOk');
+            const btnCancel = document.getElementById('inputModalBtnCancel');
+
+            const newBtnOk = btnOk.cloneNode(true);
+            const newBtnCancel = btnCancel.cloneNode(true);
+            btnOk.parentNode.replaceChild(newBtnOk, btnOk);
+            btnCancel.parentNode.replaceChild(newBtnCancel, btnCancel);
+
+            newBtnOk.onclick = () => {
+                const val = inputField.value.trim();
+                modal.classList.add('hidden');
+                if (onConfirmCallback) onConfirmCallback(val);
+            };
+            newBtnCancel.onclick = () => {
+                modal.classList.add('hidden');
+            };
+
+            modal.classList.remove('hidden');
+            setTimeout(() => inputField.focus(), 100);
+        };
 
         function createDynamicManifest() {
             const manifest = {
@@ -750,6 +1113,12 @@
             setTimeFilter('all');
             
             window.finishLoading();
+
+            if (localStorage.getItem('somtumHasUnsyncedData') === 'true') {
+                setTimeout(() => {
+                    document.getElementById('syncPromptModal').classList.remove('hidden');
+                }, 1000);
+            }
         };
 
         function setTimeFilter(filter) {
@@ -793,6 +1162,45 @@
                 setTimeFilter('range');
             }
         }
+
+        window.getFilteredTransactions = function() {
+            const txList = appData.transactions || [];
+            const searchQuery = (document.getElementById('searchTxInput') || {value:''}).value.toLowerCase();
+            const now = new Date();
+
+            return txList.filter(tx => {
+                const txDate = parseLocalDate(tx.date);
+                let timeMatch = true;
+                
+                if (currentFilter === 'custom') {
+                    timeMatch = (tx.date === selectedCustomDate);
+                } else if (currentFilter === 'range') {
+                    timeMatch = (tx.date >= selectedStartDate && tx.date <= selectedEndDate);
+                } else if (currentFilter === 'daily') {
+                    timeMatch = (tx.date === getLocalYYYYMMDD()); 
+                } else if (currentFilter === 'weekly') {
+                    const startOfWeek = new Date(now);
+                    startOfWeek.setDate(now.getDate() - now.getDay());
+                    startOfWeek.setHours(0, 0, 0, 0);
+
+                    const endOfWeek = new Date(startOfWeek);
+                    endOfWeek.setDate(startOfWeek.getDate() + 6);
+                    endOfWeek.setHours(23, 59, 59, 999);
+
+                    timeMatch = (txDate >= startOfWeek && txDate <= endOfWeek);
+                } else if (currentFilter === 'monthly') {
+                    timeMatch = (txDate.getMonth() === now.getMonth() && txDate.getFullYear() === now.getFullYear());
+                } else if (currentFilter === 'yearly') {
+                    timeMatch = (txDate.getFullYear() === now.getFullYear());
+                }
+
+                if(searchQuery && timeMatch) {
+                    const txt = `${tx.category} ${tx.subCategory} ${tx.note}`.toLowerCase();
+                    timeMatch = txt.includes(searchQuery);
+                }
+                return timeMatch;
+            });
+        };
 
         window.renderDrillDownAccordion = function(txList, containerId, prefix = 'dd') {
             const container = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
@@ -892,30 +1300,7 @@
         }
 
         window.refreshDashboard = function() {
-            const txList = appData.transactions || [];
-            const searchQuery = (document.getElementById('searchTxInput') || {value:''}).value.toLowerCase();
-            
-            const now = new Date();
-            const filteredTx = txList.filter(tx => {
-                const txDate = parseLocalDate(tx.date);
-                let timeMatch = true;
-                
-                if (currentFilter === 'custom') timeMatch = (tx.date === selectedCustomDate);
-                else if (currentFilter === 'range') timeMatch = (tx.date >= selectedStartDate && tx.date <= selectedEndDate);
-                else if (currentFilter === 'daily') timeMatch = (tx.date === getLocalYYYYMMDD()); 
-                else if (currentFilter === 'weekly') {
-                    const oneWeekAgo = new Date(); oneWeekAgo.setDate(now.getDate() - 7);
-                    timeMatch = (txDate >= oneWeekAgo && txDate <= now);
-                }
-                else if (currentFilter === 'monthly') timeMatch = (txDate.getMonth() === now.getMonth() && txDate.getFullYear() === now.getFullYear());
-                else if (currentFilter === 'yearly') timeMatch = (txDate.getFullYear() === now.getFullYear());
-
-                if(searchQuery && timeMatch) {
-                    const txt = `${tx.category} ${tx.subCategory} ${tx.note}`.toLowerCase();
-                    timeMatch = txt.includes(searchQuery);
-                }
-                return timeMatch;
-            });
+            const filteredTx = window.getFilteredTransactions();
 
             let totalIncome = 0, totalExpense = 0;
             filteredTx.forEach(tx => {
@@ -985,21 +1370,78 @@
             renderCategoryReport(currentReportTab);
         }
 
+        window.safeCalculate = function(expr) {
+            if (!expr) return 0;
+            let cleaned = expr.replace(/x/gi, '*').replace(/÷/g, '/').replace(/\s+/g, '');
+            if (!/^[0-9+\-*/().]+$/.test(cleaned)) return NaN;
+            
+            try {
+                let tokens = cleaned.match(/(\d+(?:\.\d+)?|[+\-*/()])/g);
+                if (!tokens) return NaN;
+
+                let outputQueue = [];
+                let operatorStack = [];
+                let precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
+
+                for (let token of tokens) {
+                    if (!isNaN(token)) {
+                        outputQueue.push(parseFloat(token));
+                    } else if ('+-*/'.includes(token)) {
+                        while (
+                            operatorStack.length > 0 &&
+                            '+-*/'.includes(operatorStack[operatorStack.length - 1]) &&
+                            precedence[operatorStack[operatorStack.length - 1]] >= precedence[token]
+                        ) {
+                            outputQueue.push(operatorStack.pop());
+                        }
+                        operatorStack.push(token);
+                    } else if (token === '(') {
+                        operatorStack.push(token);
+                    } else if (token === ')') {
+                        while (operatorStack.length > 0 && operatorStack[operatorStack.length - 1] !== '(') {
+                            outputQueue.push(operatorStack.pop());
+                        }
+                        operatorStack.pop();
+                    }
+                }
+                while (operatorStack.length > 0) {
+                    outputQueue.push(operatorStack.pop());
+                }
+
+                let evalStack = [];
+                for (let token of outputQueue) {
+                    if (typeof token === 'number') {
+                        evalStack.push(token);
+                    } else {
+                        let b = evalStack.pop();
+                        let a = evalStack.pop();
+                        if (a === undefined || b === undefined) return NaN;
+                        if (token === '+') evalStack.push(a + b);
+                        if (token === '-') evalStack.push(a - b);
+                        if (token === '*') evalStack.push(a * b);
+                        if (token === '/') {
+                            if (b === 0) return NaN;
+                            evalStack.push(a / b);
+                        }
+                    }
+                }
+                return evalStack.length === 1 ? evalStack[0] : NaN;
+            } catch (e) {
+                return NaN;
+            }
+        };
+
         function appendMathSymbol(symbol) { document.getElementById('txAmount').value += symbol; document.getElementById('txAmount').focus(); }
         function clearMathAmount() { document.getElementById('txAmount').value = ''; document.getElementById('txAmount').focus(); }
         
         function calculateAmount() {
             const inputField = document.getElementById('txAmount');
-            let val = inputField.value.trim().replace(/x/gi, '*').replace(/÷/g, '/');
-            const sanitized = val.replace(/[^-()\d/*+.]/g, ''); 
-            if(!sanitized) return;
-            try {
-                if (/[-+*/.]$/.test(sanitized)) return;
-                const result = new Function('return ' + sanitized)();
-                if (!isNaN(result) && isFinite(result)) {
-                    inputField.value = Number(Math.max(0, result)).toFixed(2);
-                }
-            } catch (e) { console.warn("Calc err", e); }
+            let val = inputField.value.trim();
+            if(!val) return;
+            const result = window.safeCalculate(val);
+            if (!isNaN(result) && isFinite(result)) {
+                inputField.value = Number(Math.max(0, result)).toFixed(2);
+            }
         }
 
         function openTransactionModal(type, editId = null) {
@@ -1130,10 +1572,9 @@
                 appData.transactions.push(txObj);
             }
 
-            window.syncDataToCloud();
+            window.saveTransactionToFirestore(txObj);
             closeTransactionModal();
             window.showToast(editId ? 'อัปเดตข้อมูลแล้ว' : 'บันทึกข้อมูลเรียบร้อย');
-            refreshDashboard();
             
             if(!document.getElementById('calendarDayModal').classList.contains('hidden')) {
                 openCalendarDayModal(selectedCalendarDay);
@@ -1146,38 +1587,39 @@
         }
         
         window.deleteTransaction = function(id) {
-            if(confirm('ต้องการลบรายการนี้ใช่หรือไม่?')) {
+            window.showConfirmModal("ยืนยันการลบ", "คุณต้องการลบรายการนี้ใช่หรือไม่?", () => {
                 appData.transactions = appData.transactions.filter(t => t.id !== id);
-                window.syncDataToCloud();
-                refreshDashboard();
+                window.deleteTransactionFromFirestore(id);
+                window.refreshDashboard();
                 if(!document.getElementById('calendarDayModal').classList.contains('hidden')) {
                     openCalendarDayModal(selectedCalendarDay);
                 }
-            }
+                window.showToast('ลบรายการเรียบร้อย');
+            });
         }
 
         window.openCardDetailModal = function(cardType) {
             const modal = document.getElementById('cardDetailModal');
             const itemsContainer = document.getElementById('cardDetailItems');
             
-            const txList = appData.transactions || [];
+            const filteredTx = window.getFilteredTransactions();
             let listData = [];
             
-            if (cardType === 'income') listData = txList.filter(t => t.type === 'income');
-            else if (cardType === 'expense') listData = txList.filter(t => t.type === 'expense');
-            else listData = txList;
+            if (cardType === 'income') listData = filteredTx.filter(t => t.type === 'income');
+            else if (cardType === 'expense') listData = filteredTx.filter(t => t.type === 'expense');
+            else listData = filteredTx;
 
-            document.getElementById('cardDetailSummary').innerText = `พบข้อมูลทั้งหมด ${listData.length} รายการ`;
+            document.getElementById('cardDetailSummary').innerText = `พบข้อมูลทั้งหมด ${listData.length} รายการ (ตามตัวกรองเวลาปัจจุบัน)`;
             window.renderDrillDownAccordion(listData, itemsContainer, 'kpiModal');
             modal.classList.remove('hidden');
         }
 
         window.openGoalDetailModal = function() {
             document.getElementById('customGoalInput').value = appData.customGoal || '';
-            const txList = appData.transactions || [];
-            let exp = 0; txList.filter(t=>t.type==='expense').forEach(t=> exp += Number(t.amount));
+            const filteredTx = window.getFilteredTransactions();
+            let exp = 0; filteredTx.filter(t=>t.type==='expense').forEach(t=> exp += Number(t.amount));
             const calc = exp * 1.6;
-            document.getElementById('goalCalculationBreakdown').innerHTML = `สูตร (รายจ่าย + 60%): ฿${calc.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+            document.getElementById('goalCalculationBreakdown').innerHTML = `สูตร (รายจ่าย + 60% จากตัวกรองปัจจุบัน): ฿${calc.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
             document.getElementById('goalDetailModal').classList.remove('hidden');
         }
 
@@ -1185,7 +1627,7 @@
             const val = document.getElementById('customGoalInput').value;
             if(val) appData.customGoal = Number(val);
             window.syncDataToCloud();
-            refreshDashboard();
+            window.refreshDashboard();
             window.showToast('ตั้งเป้าหมายสำเร็จ');
             document.getElementById('goalDetailModal').classList.add('hidden');
         }
@@ -1194,7 +1636,7 @@
             appData.customGoal = null;
             document.getElementById('customGoalInput').value = '';
             window.syncDataToCloud();
-            refreshDashboard();
+            window.refreshDashboard();
             window.showToast('กลับไปใช้เป้าหมายสูตรปกติ');
         }
 
@@ -1202,10 +1644,20 @@
             const listElem = document.getElementById('transactionList');
             document.getElementById('transactionCount').innerText = `${txList.length} รายการ`;
             listElem.innerHTML = '';
-            if (txList.length === 0) return listElem.innerHTML = `<div class="text-center py-6 text-gray-400 text-xs">ไม่พบรายการ</div>`;
+            if (txList.length === 0) {
+                document.getElementById('loadMoreHistoryContainer').classList.add('hidden');
+                return listElem.innerHTML = `<div class="text-center py-6 text-gray-400 text-xs">ไม่พบรายการ</div>`;
+            }
+
+            const limitedTx = txList.slice(0, historyDisplayLimit);
+            if (txList.length > historyDisplayLimit) {
+                document.getElementById('loadMoreHistoryContainer').classList.remove('hidden');
+            } else {
+                document.getElementById('loadMoreHistoryContainer').classList.add('hidden');
+            }
 
             const dateGrouped = {};
-            txList.forEach(tx => {
+            limitedTx.forEach(tx => {
                 const d = tx.date || 'ไม่ระบุวันที่';
                 if (!dateGrouped[d]) dateGrouped[d] = { inc: 0, exp: 0, items: [] };
                 if (tx.type === 'income') dateGrouped[d].inc += Number(tx.amount) || 0;
@@ -1247,15 +1699,89 @@
             });
         }
 
+        window.loadMoreHistory = function() {
+            historyDisplayLimit += 50;
+            refreshDashboard();
+        };
+
+        window.loadMoreReport = function() {
+            reportDisplayLimit += 50;
+            renderCategoryReport(currentReportTab);
+        };
+
         window.exportDataToJSON = function() {
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appData));
             const downloadAnchorNode = document.createElement('a');
-            downloadAnchorNode.setAttribute("href",     dataStr);
+            downloadAnchorNode.setAttribute("href", dataStr);
             downloadAnchorNode.setAttribute("download", "somtum-data-backup.json");
             document.body.appendChild(downloadAnchorNode);
             downloadAnchorNode.click();
             downloadAnchorNode.remove();
         }
+
+        window.importDataFromJSON = function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                try {
+                    const parsed = JSON.parse(e.target.result);
+                    if (!parsed.transactions || !parsed.categories) {
+                        alert('ไฟล์ JSON ไม่ถูกต้องตามโครงสร้างแอป');
+                        return;
+                    }
+                    window.showConfirmModal("ยืนยันการนำเข้าข้อมูล", "ข้อมูลใหม่จะถูกนำมาแทนที่ข้อมูลปัจจุบัน คุณต้องการดำเนินการต่อหรือไม่?", async () => {
+                        window.showToast("กำลังนำเข้าข้อมูล...");
+                        window.appData = parsed;
+                        if (!window.appData.materials) window.appData.materials = [...window.DEFAULT_MATERIALS];
+                        if (!window.appData.equipments) window.appData.equipments = [...window.DEFAULT_EQUIPMENTS];
+                        
+                        window.syncDataToCloud();
+                        if (currentUser) {
+                            const txCollRef = collection(db, "users", currentUser.uid, "transactions");
+                            const snap = await getDocs(txCollRef);
+                            
+                            let batch = writeBatch(db);
+                            let count = 0;
+                            for (const d of snap.docs) {
+                                batch.delete(d.ref);
+                                count++;
+                                if (count >= 400) {
+                                    await batch.commit();
+                                    batch = writeBatch(db);
+                                    count = 0;
+                                }
+                            }
+                            if (count > 0) {
+                                await batch.commit();
+                            }
+
+                            batch = writeBatch(db);
+                            count = 0;
+                            for (const tx of window.appData.transactions) {
+                                const txRef = doc(db, "users", currentUser.uid, "transactions", tx.id);
+                                batch.set(txRef, tx);
+                                count++;
+                                if (count >= 400) {
+                                    await batch.commit();
+                                    batch = writeBatch(db);
+                                    count = 0;
+                                }
+                            }
+                            if (count > 0) {
+                                await batch.commit();
+                            }
+                        }
+                        window.refreshDashboard();
+                        window.showToast('นำเข้าข้อมูลสำเร็จ');
+                    });
+                } catch (err) {
+                    alert('เกิดข้อผิดพลาดในการอ่านไฟล์ JSON');
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+        };
 
         window.switchTab = function(tabKey) {
             ['history', 'categoryReport', 'categoryManager'].forEach(k => {
@@ -1278,8 +1804,16 @@
                 btnExp.className = activeType === 'expense' ? "px-3 py-1.5 text-xs font-bold rounded-lg bg-rose-100 text-rose-800" : "px-3 py-1.5 text-xs rounded-lg bg-gray-100 text-gray-600";
             }
             
-            const filteredTx = (appData.transactions || []).filter(t => t.type === activeType);
-            window.renderDrillDownAccordion(filteredTx, 'categoryReportList', 'catReportTab');
+            const filteredTx = window.getFilteredTransactions().filter(t => t.type === activeType);
+            const limitedReport = filteredTx.slice(0, reportDisplayLimit);
+            
+            if (filteredTx.length > reportDisplayLimit) {
+                document.getElementById('loadMoreReportContainer').classList.remove('hidden');
+            } else {
+                document.getElementById('loadMoreReportContainer').classList.add('hidden');
+            }
+
+            window.renderDrillDownAccordion(limitedReport, 'categoryReportList', 'catReportTab');
         }
 
         window.changeCalendarMonth = function(delta) { calendarCurrentDate.setMonth(calendarCurrentDate.getMonth() + delta); renderFullMonthCalendar(); }
@@ -1353,96 +1887,126 @@
                 if(cat.subs && cat.subs.length > 0) {
                     subs = cat.subs.map((s, j) => `<span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[10px] inline-flex items-center gap-1 mb-1">${escapeHTML(s)} <button onclick="deleteSubCategory(${i}, ${j})" class="text-gray-400 hover:text-rose-500"><i class="fa-solid fa-xmark"></i></button></span>`).join(' ');
                 }
+                let badge = '';
+                if(cat.flags?.isMaterialCategory) badge = `<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-medium">วัตถุดิบ</span>`;
+                if(cat.flags?.isEquipmentCategory) badge = `<span class="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-medium">อุปกรณ์</span>`;
+
                 list.innerHTML += `
                     <div class="bg-white border border-gray-200 rounded-xl p-3">
                         <div class="flex justify-between items-center mb-2">
-                            <span class="font-bold text-xs text-gray-800 flex items-center gap-1.5"><i class="fa-solid fa-folder text-brand-500"></i> ${escapeHTML(cat.name)}</span>
+                            <span class="font-bold text-xs text-gray-800 flex items-center gap-1.5"><i class="fa-solid fa-folder text-brand-500"></i> ${escapeHTML(cat.name)} ${badge}</span>
                             <button onclick="deleteMainCategory(${i})" class="text-gray-400 hover:text-rose-500 text-xs"><i class="fa-solid fa-trash"></i></button>
                         </div>
-                        <div class="flex flex-wrap gap-1 mb-2">${subs || '<span class="text-[10px] text-gray-400 italic">ไม่มีหมวดย่อย</span>'}</div>
+                        <div class="flex flex-wrap gap-1 mb-2">${subs || (cat.flags?.isMaterialCategory || cat.flags?.isEquipmentCategory ? '<span class="text-[10px] text-gray-400 italic">เลือกจากลิสต์วัตถุดิบ/อุปกรณ์อัตโนมัติ</span>' : '<span class="text-[10px] text-gray-400 italic">ไม่มีรายการย่อย</span>')}</div>
                         <div class="flex gap-1.5">
-                            <input type="text" id="newSubCatInput-${i}" placeholder="+ เพิ่มหมวดย่อย..." class="flex-1 text-[11px] border border-gray-200 rounded-lg px-2 py-1 bg-gray-50 focus:outline-none">
-                            <button onclick="addNewSubCategory(${i})" class="bg-gray-100 hover:bg-gray-200 text-gray-700 text-[11px] px-2.5 py-1 rounded-lg font-medium">เพิ่ม</button>
+                            <input type="text" id="newSub-${i}" placeholder="เพิ่มรายการย่อย..." class="flex-1 text-[11px] border border-gray-300 rounded-lg px-2.5 py-1.5 bg-gray-50 focus:outline-none">
+                            <button onclick="addSubCategory(${i})" class="bg-gray-800 hover:bg-gray-900 text-white text-[11px] px-3 py-1.5 rounded-lg">+ เพิ่ม</button>
                         </div>
                     </div>`;
             });
         }
 
         window.addNewCategory = function() {
-            const input = document.getElementById('newCatName');
-            const val = input.value.trim();
-            if(!val) return;
-            if(!appData.categories[managerType]) appData.categories[managerType] = [];
-            appData.categories[managerType].push({ name: val, subs: [] });
-            input.value = '';
+            const nameInput = document.getElementById('newCatName');
+            const name = nameInput.value.trim();
+            if(!name) return;
+            const isMaterial = document.getElementById('newCatIsMaterial').checked;
+            const isEquipment = document.getElementById('newCatIsEquipment').checked;
+
+            const cats = appData.categories[managerType];
+            if(cats.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+                alert('มีหมวดหมู่นี้อยู่แล้ว');
+                return;
+            }
+
+            const newCat = { name, subs: [] };
+            if (isMaterial || isEquipment) {
+                newCat.flags = {};
+                if (isMaterial) newCat.flags.isMaterialCategory = true;
+                if (isEquipment) newCat.flags.isEquipmentCategory = true;
+            }
+
+            cats.push(newCat);
+            nameInput.value = '';
+            document.getElementById('newCatIsMaterial').checked = false;
+            document.getElementById('newCatIsEquipment').checked = false;
             window.syncDataToCloud();
             window.renderCategoryTree();
             window.showToast('เพิ่มหมวดหมู่เรียบร้อย');
         }
 
-        window.deleteMainCategory = function(index) {
-            if(confirm('ต้องการลบหมวดหมู่นี้ใช่หรือไม่?')) {
-                appData.categories[managerType].splice(index, 1);
+        window.deleteMainCategory = function(i) {
+            window.showConfirmModal("ยืนยันการลบหมวดหมู่", "การลบหมวดหมู่หลักจะทำให้รายการย่อยทั้งหมดถูกลบด้วย", () => {
+                appData.categories[managerType].splice(i, 1);
                 window.syncDataToCloud();
                 window.renderCategoryTree();
-                window.showToast('ลบหมวดหมู่เรียบร้อย');
-            }
+                window.showToast('ลบหมวดหมู่แล้ว');
+            });
         }
 
-        window.addNewSubCategory = function(mainIndex) {
-            const input = document.getElementById(`newSubCatInput-${mainIndex}`);
+        window.addSubCategory = function(i) {
+            const input = document.getElementById(`newSub-${i}`);
             const val = input.value.trim();
             if(!val) return;
-            if(!appData.categories[managerType][mainIndex].subs) {
-                appData.categories[managerType][mainIndex].subs = [];
+            const cat = appData.categories[managerType][i];
+            if(!cat.subs) cat.subs = [];
+            if(cat.subs.includes(val)) {
+                alert('มีรายการย่อยนี้อยู่แล้ว');
+                return;
             }
-            appData.categories[managerType][mainIndex].subs.push(val);
+            cat.subs.push(val);
             input.value = '';
             window.syncDataToCloud();
             window.renderCategoryTree();
-            window.showToast('เพิ่มหมวดย่อยเรียบร้อย');
+            window.showToast('เพิ่มรายการย่อยแล้ว');
         }
 
-        window.deleteSubCategory = function(mainIndex, subIndex) {
-            appData.categories[managerType][mainIndex].subs.splice(subIndex, 1);
+        window.deleteSubCategory = function(i, j) {
+            appData.categories[managerType][i].subs.splice(j, 1);
             window.syncDataToCloud();
             window.renderCategoryTree();
-            window.showToast('ลบหมวดย่อยเรียบร้อย');
-        }
-
-        window.addNewMaterialItem = function() {
-            const itemType = document.getElementById('newItemType').value;
-            const nameInput = document.getElementById('newItemName');
-            const val = nameInput.value.trim();
-            if(!val) return;
-            const targetList = itemType === 'วัตถุดิบ' ? appData.materials : appData.equipments;
-            if(!targetList.includes(val)) {
-                targetList.push(val);
-                window.syncDataToCloud();
-                window.renderMaterialTags();
-                window.showToast(`เพิ่ม${itemType}เรียบร้อย`);
-            }
-            nameInput.value = '';
-        }
-
-        window.deleteMaterialItem = function(type, index) {
-            const targetList = type === 'วัตถุดิบ' ? appData.materials : appData.equipments;
-            targetList.splice(index, 1);
-            window.syncDataToCloud();
-            window.renderMaterialTags();
-            window.showToast('ลบรายการเรียบร้อย');
+            window.showToast('ลบรายการย่อยแล้ว');
         }
 
         window.renderMaterialTags = function() {
-            const listElem = document.getElementById('materialItemsList');
-            if(!listElem) return;
-            listElem.innerHTML = '';
-            (appData.materials||[]).forEach((m, i) => {
-                listElem.innerHTML += `<span class="bg-amber-50 text-amber-800 border border-amber-200 px-2 py-1 rounded-lg text-[11px] inline-flex items-center gap-1">วัตถุดิบ: ${escapeHTML(m)} <button onclick="deleteMaterialItem('วัตถุดิบ', ${i})" class="text-amber-500 hover:text-rose-600"><i class="fa-solid fa-xmark"></i></button></span>`;
+            const list = document.getElementById('materialItemsList');
+            if(!list) return;
+            list.innerHTML = '';
+            
+            appData.materials.forEach((m, idx) => {
+                list.innerHTML += `<span class="bg-amber-50 text-amber-900 border border-amber-200 px-2.5 py-1 rounded-xl text-[11px] inline-flex items-center gap-1.5 font-medium">${escapeHTML(m)} <button onclick="deleteMaterialItem('วัตถุดิบ', ${idx})" class="text-amber-700 hover:text-rose-600"><i class="fa-solid fa-xmark"></i></button></span>`;
             });
-            (appData.equipments||[]).forEach((e, i) => {
-                listElem.innerHTML += `<span class="bg-blue-50 text-blue-800 border border-blue-200 px-2 py-1 rounded-lg text-[11px] inline-flex items-center gap-1">อุปกรณ์: ${escapeHTML(e)} <button onclick="deleteMaterialItem('อุปกรณ์', ${i})" class="text-blue-500 hover:text-rose-600"><i class="fa-solid fa-xmark"></i></button></span>`;
+            appData.equipments.forEach((eq, idx) => {
+                list.innerHTML += `<span class="bg-blue-50 text-blue-900 border border-blue-200 px-2.5 py-1 rounded-xl text-[11px] inline-flex items-center gap-1.5 font-medium">${escapeHTML(eq)} <button onclick="deleteMaterialItem('อุปกรณ์', ${idx})" class="text-blue-700 hover:text-rose-600"><i class="fa-solid fa-xmark"></i></button></span>`;
             });
+        }
+
+        window.addNewMaterialItem = function() {
+            const type = document.getElementById('newItemType').value;
+            const nameInput = document.getElementById('newItemName');
+            const name = nameInput.value.trim();
+            if(!name) return;
+
+            if(type === 'วัตถุดิบ') {
+                if(appData.materials.includes(name)) { alert('มีรายการนี้อยู่แล้ว'); return; }
+                appData.materials.push(name);
+            } else {
+                if(appData.equipments.includes(name)) { alert('มีรายการนี้อยู่แล้ว'); return; }
+                appData.equipments.push(name);
+            }
+
+            nameInput.value = '';
+            window.syncDataToCloud();
+            window.renderMaterialTags();
+            window.showToast('เพิ่มรายการสำเร็จ');
+        }
+
+        window.deleteMaterialItem = function(type, idx) {
+            if(type === 'วัตถุดิบ') appData.materials.splice(idx, 1);
+            else appData.equipments.splice(idx, 1);
+            window.syncDataToCloud();
+            window.renderMaterialTags();
+            window.showToast('ลบรายการสำเร็จ');
         }
     </script>
 </body>
