@@ -424,7 +424,8 @@
     <!-- Firebase v12 Module Script -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
-        import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+        // เปลี่ยนแปลง: นำเข้าเครื่องมือสำหรับ Redirect และการจัดการ Session
+        import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
         import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -444,13 +445,31 @@
 
         let currentUser = null;
 
+        // เปลี่ยนแปลง: เช็คสถานะตอนเด้งกลับมาจากการ Redirect
+        getRedirectResult(auth).then((result) => {
+            if (result && result.user) {
+                window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + result.user.displayName);
+            }
+        }).catch((error) => {
+            console.error("Redirect Auth Error:", error);
+            // ดักจับ Error: missing-initial-state เพื่อไม่ให้แสดงแจ้งเตือนรกหูรกตาผู้ใช้
+            if (error.code === 'auth/missing-initial-state') {
+                console.warn('เกิดปัญหาเกี่ยวกับการอ่าน Session Storage ของ WebView - กรุณาเปิดการตั้งค่า DOM Storage ใน APK');
+            } else {
+                alert('เกิดข้อผิดพลาดในการลงชื่อเข้าใช้: ' + error.message);
+            }
+        });
+
+        // เปลี่ยนแปลง: ปรับปรุงฟังก์ชัน Login ให้เหมาะสำหรับ WebView/APK
         window.loginGoogle = async function() {
             try {
-                const result = await signInWithPopup(auth, googleProvider);
-                window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + result.user.displayName);
+                // บังคับให้จดจำแบบ Local ป้องกันเซสชั่นหลุดในแอป
+                await setPersistence(auth, browserLocalPersistence);
+                // เปลี่ยนจาก signInWithPopup เป็น signInWithRedirect 
+                await signInWithRedirect(auth, googleProvider);
             } catch (error) {
-                console.error("Login failed:", error);
-                alert('เกิดข้อผิดพลาดในการลงชื่อเข้าใช้: ' + error.message);
+                console.error("Login initiation failed:", error);
+                alert('เกิดข้อผิดพลาดในการเปิดหน้าลงชื่อเข้าใช้: ' + error.message);
             }
         };
 
@@ -539,13 +558,11 @@
             }
         };
 
-        // ส่งข้อมูลขึ้น Firestore (เพิ่มการเช็คข้อมูลใหม่กว่าป้องกันการเขียนทับ)
         window.pushDataToFirestore = async function() {
             if (!currentUser) return;
             try {
                 const userDocRef = doc(db, "users", currentUser.uid);
                 
-                // 1. เช็คข้อมูลบนคลาวด์ก่อนทับ
                 const docSnap = await getDoc(userDocRef);
                 if (docSnap.exists()) {
                     const cloudData = docSnap.data();
@@ -561,7 +578,6 @@
                     }
                 }
 
-                // 2. ถ้าผู้ใช้ตกลง หรือคลาวด์ไม่ได้ใหม่กว่า ให้เขียนทับได้
                 const nowIso = new Date().toISOString();
                 await setDoc(userDocRef, {
                     appData: window.appData,
@@ -578,7 +594,6 @@
             }
         };
 
-        // ดึงข้อมูลจาก Firestore (พร้อมแจ้ง Toast เมื่อล้มเหลว)
         window.pullDataFromFirestore = async function() {
             if (!currentUser) return;
             try {
@@ -779,9 +794,6 @@
             }
         }
 
-        // ==========================================
-        // ฟังก์ชันกลาง: Drill-Down Accordion 3 ชั้น
-        // ==========================================
         window.renderDrillDownAccordion = function(txList, containerId, prefix = 'dd') {
             const container = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
             if (!container) return;
@@ -791,7 +803,6 @@
                 return;
             }
 
-            // จัดกลุ่ม 3 ชั้น: หมวดหลัก -> หมวดย่อย -> รายการเดี่ยว
             const grouped = {};
             txList.forEach(tx => {
                 const cat = tx.category || 'ไม่ระบุหมวดหมู่';
@@ -814,7 +825,6 @@
                     const subData = catData.subs[subName];
                     const subId = `${prefix}-sub-${catIdx}-${subIdx}`;
 
-                    // ชั้น 3: รายการเดี่ยว (พร้อมปุ่มแก้ไข/ลบ)
                     const itemsHtml = subData.items.map(it => {
                         const isInc = it.type === 'income';
                         return `
@@ -835,7 +845,6 @@
                         </div>`;
                     }).join('');
 
-                    // ชั้น 2: หมวดย่อย
                     subHtml += `
                     <div class="bg-gray-50/80 rounded-xl p-2 border border-gray-100 my-1.5">
                         <div class="flex justify-between items-center text-xs font-semibold text-gray-700 cursor-pointer py-0.5" onclick="toggleSubDetail('${subId}')">
@@ -852,7 +861,6 @@
                     </div>`;
                 });
 
-                // ชั้น 1: หมวดหมู่หลัก
                 html += `
                 <div class="bg-white rounded-2xl border border-gray-200 shadow-2xs p-3 my-2">
                     <div class="flex justify-between items-center cursor-pointer" onclick="toggleSubDetail('${catId}')">
@@ -1148,7 +1156,6 @@
             }
         }
 
-        // 1. การ์ด KPI (ใช้ฟังก์ชันกลาง renderDrillDownAccordion)
         window.openCardDetailModal = function(cardType) {
             const modal = document.getElementById('cardDetailModal');
             const itemsContainer = document.getElementById('cardDetailItems');
@@ -1191,14 +1198,12 @@
             window.showToast('กลับไปใช้เป้าหมายสูตรปกติ');
         }
 
-        // 2. แท็บ "ประวัติรายการ" (จัดกลุ่มตามวัน + เรียกใช้ drill-down)
         function renderTransactionHistory(txList) {
             const listElem = document.getElementById('transactionList');
             document.getElementById('transactionCount').innerText = `${txList.length} รายการ`;
             listElem.innerHTML = '';
             if (txList.length === 0) return listElem.innerHTML = `<div class="text-center py-6 text-gray-400 text-xs">ไม่พบรายการ</div>`;
 
-            // จัดกลุ่มตามวันที่
             const dateGrouped = {};
             txList.forEach(tx => {
                 const d = tx.date || 'ไม่ระบุวันที่';
@@ -1238,7 +1243,6 @@
                 `;
                 listElem.appendChild(card);
 
-                // เรียกใช้ drill-down 3 ชั้นภายในแต่ละวัน
                 window.renderDrillDownAccordion(dayData.items, containerId, `hist-${dIdx}`);
             });
         }
@@ -1263,7 +1267,6 @@
             if (tabKey === 'categoryManager') { window.renderCategoryTree(); window.renderMaterialTags(); }
         }
 
-        // 3. แท็บ "รายงานหมวดหมู่" (ใช้ฟังก์ชันกลาง renderDrillDownAccordion)
         window.renderCategoryReport = function(type) {
             currentReportTab = type || currentReportTab;
             const activeType = currentReportTab;
@@ -1308,7 +1311,6 @@
             }
         }
         
-        // 4. Modal ปฏิทินรายวัน (ใช้ฟังก์ชันกลาง renderDrillDownAccordion)
         window.openCalendarDayModal = function(dStr) {
             selectedCalendarDay = dStr;
             const txs = (appData.transactions || []).filter(t => t.date === dStr);
