@@ -207,7 +207,7 @@
         <div class="flex justify-between items-center mb-3 gap-2">
           <div class="relative flex-1">
             <i class="fa-solid fa-search absolute left-3 top-2.5 text-gray-400 text-xs"></i>
-            <input type="text" id="searchTxInput" oninput="refreshDashboard()" placeholder="ค้นหารายการ, โน้ต..." class="w-full pl-8 pr-3 py-2 text-xs border border-gray-300 rounded-xl bg-gray-50 focus:outline-none focus:ring-1 focus:ring-brand-500">
+            <input type="text" id="searchTxInput" oninput="window.refreshDashboard()" placeholder="ค้นหารายการ, โน้ต..." class="w-full pl-8 pr-3 py-2 text-xs border border-gray-300 rounded-xl bg-gray-50 focus:outline-none focus:ring-1 focus:ring-brand-500">
           </div>
           <span id="transactionCount" class="text-xs font-semibold bg-gray-100 px-2.5 py-2 rounded-xl text-gray-600 whitespace-nowrap">0 รายการ</span>
         </div>
@@ -292,6 +292,9 @@
               <input type="file" id="importFileJson" accept=".json" onchange="importDataFromJSON(event)" class="hidden">
             </label>
           </div>
+          <button onclick="window.resetAllData()" class="w-full mt-2 py-2.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-xl font-bold text-xs border border-rose-200 transition-all flex items-center justify-center gap-2">
+            <i class="fa-solid fa-trash-can"></i> ล้างข้อมูลทั้งหมด (Reset)
+          </button>
         </div>
       </div>
     </div>
@@ -768,6 +771,7 @@
           if (data.materials) window.appData.materials = data.materials;
           if (data.equipments) window.appData.equipments = data.equipments;
           if (data.customGoal !== undefined) window.appData.customGoal = data.customGoal;
+          window.appData = window.sanitizeAppData(window.appData);
           window.saveLocalOnly();
           window.refreshDashboard();
         } else {
@@ -786,6 +790,7 @@
         const txs = [];
         querySnap.forEach((d) => { txs.push(d.data()); });
         window.appData.transactions = txs;
+        window.appData = window.sanitizeAppData(window.appData);
         window.saveLocalOnly();
         window.refreshDashboard();
         window.updateSyncUI(true);
@@ -948,6 +953,59 @@
       customGoal: null
     };
 
+    window.sanitizeAppData = function(data) {
+      if (!data || typeof data !== 'object') {
+        data = {};
+      }
+      if (!Array.isArray(data.transactions)) data.transactions = [];
+      if (!data.categories || typeof data.categories !== 'object') {
+        data.categories = JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES));
+      }
+      if (!Array.isArray(data.categories.income)) {
+        data.categories.income = JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES.income));
+      }
+      if (!Array.isArray(data.categories.expense)) {
+        data.categories.expense = JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES.expense));
+      }
+      // Ensure each category has name and subs array
+      ['income', 'expense'].forEach(type => {
+        data.categories[type] = data.categories[type].filter(c => c && typeof c.name === 'string').map(c => ({
+          name: String(c.name),
+          subs: Array.isArray(c.subs) ? c.subs.filter(s => typeof s === 'string') : [],
+          flags: c.flags && typeof c.flags === 'object' ? c.flags : undefined
+        }));
+        if (data.categories[type].length === 0) {
+          data.categories[type] = JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES[type]));
+        }
+      });
+      if (!Array.isArray(data.materials)) data.materials = [...window.DEFAULT_MATERIALS];
+      if (!Array.isArray(data.equipments)) data.equipments = [...window.DEFAULT_EQUIPMENTS];
+      if (data.customGoal !== null && data.customGoal !== undefined) {
+        const g = Number(data.customGoal);
+        data.customGoal = (!isNaN(g) && g > 0) ? g : null;
+      } else {
+        data.customGoal = null;
+      }
+      // Clean transactions
+      data.transactions = data.transactions.filter(tx => {
+        return tx && typeof tx === 'object'
+          && (tx.type === 'income' || tx.type === 'expense')
+          && typeof tx.date === 'string'
+          && !isNaN(Number(tx.amount)) && Number(tx.amount) > 0;
+      }).map(tx => ({
+        id: String(tx.id || (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2))),
+        type: tx.type,
+        date: tx.date,
+        time: tx.time || '00:00',
+        category: String(tx.category || 'ไม่ระบุ'),
+        subCategory: tx.subCategory ? String(tx.subCategory) : '',
+        amount: Number(Number(tx.amount).toFixed(2)),
+        note: tx.note ? String(tx.note) : ''
+      }));
+      return data;
+    };
+
+
     window.getLocalYYYYMMDD = function(dateObj = new Date()) {
       const y = dateObj.getFullYear();
       const m = String(dateObj.getMonth() + 1).padStart(2, '0');
@@ -1036,11 +1094,13 @@
       const savedData = localStorage.getItem('somtumAppData');
       if (savedData) {
         try {
-          window.appData = JSON.parse(savedData);
-          if(!window.appData.materials) window.appData.materials = [...window.DEFAULT_MATERIALS];
-          if(!window.appData.equipments) window.appData.equipments = [...window.DEFAULT_EQUIPMENTS];
-          if(!window.appData.categories) window.appData.categories = JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES));
-        } catch(e) {}
+          window.appData = window.sanitizeAppData(JSON.parse(savedData));
+        } catch(e) {
+          console.error("Load local data failed:", e);
+          window.appData = window.sanitizeAppData({});
+        }
+      } else {
+        window.appData = window.sanitizeAppData(window.appData);
       }
       document.getElementById('selectedDate').value = selectedCustomDate;
       document.getElementById('startDate').value = selectedStartDate;
@@ -1057,6 +1117,8 @@
 
     function setTimeFilter(filter) {
       currentFilter = filter;
+      historyDisplayLimit = 50;
+      reportDisplayLimit = 50;
       document.querySelectorAll('.filter-btn').forEach(btn => {
         btn.classList.remove('bg-brand-600', 'text-white', 'shadow-sm');
         btn.classList.add('text-gray-600');
@@ -1086,7 +1148,7 @@
         rangeContainer.classList.add('hidden');
         rangeContainer.classList.remove('flex');
       }
-      refreshDashboard();
+      window.refreshDashboard();
     }
 
     function onCustomDateSelect() {
@@ -1103,7 +1165,7 @@
     }
 
     window.getFilteredTransactions = function() {
-      const txList = appData.transactions || [];
+      const txList = window.appData.transactions || [];
       const searchQuery = (document.getElementById('searchTxInput') || {value:''}).value.toLowerCase();
       const now = new Date();
 
@@ -1246,7 +1308,7 @@
 
       const netProfit = totalIncome - totalExpense;
       let targetGoal = totalExpense > 0 ? totalExpense * 1.6 : (totalIncome > 0 ? totalIncome : 1000);
-      if (appData.customGoal && appData.customGoal > 0) targetGoal = appData.customGoal;
+      if (window.appData.customGoal && window.appData.customGoal > 0) targetGoal = window.appData.customGoal;
 
       const goalAchievedPercent = targetGoal > 0 ? (totalIncome / targetGoal) * 100 : 0;
 
@@ -1402,7 +1464,13 @@
 
       const catSelect = document.getElementById('txCategory');
       catSelect.innerHTML = '';
-      appData.categories[type].forEach(c => {
+      window.appData = window.sanitizeAppData(window.appData);
+      const catList = (window.appData.categories && window.appData.categories[type]) ? window.appData.categories[type] : [];
+      if (catList.length === 0) {
+        alert('ไม่พบหมวดหมู่ กรุณาเพิ่มหมวดหมู่ก่อนในแท็บตั้งค่า');
+        return;
+      }
+      catList.forEach(c => {
         const opt = document.createElement('option');
         opt.value = c.name;
         opt.innerText = c.name;
@@ -1416,7 +1484,7 @@
       _editTxIdTemp = null;
 
       if (editId) {
-        const tx = appData.transactions.find(t => t.id === editId);
+        const tx = window.appData.transactions.find(t => t.id === editId);
         if (tx) {
           _editTxIdTemp = tx;
           document.getElementById('txDate').value = tx.date;
@@ -1440,7 +1508,7 @@
       const chkList = document.getElementById('materialsChecklist');
       const chkLabel = document.getElementById('checklistLabel');
 
-      const catObj = appData.categories[type].find(c => c.name === catSelect.value);
+      const catObj = window.appData.categories[type].find(c => c.name === catSelect.value);
       subContainer.classList.add('hidden');
       chkContainer.classList.add('hidden');
 
@@ -1453,7 +1521,7 @@
           chkLabel.innerHTML = isMaterial ? `<i class="fa-solid fa-basket-shopping text-brand-500 mr-1"></i> เลือกวัตถุดิบ:` : `<i class="fa-solid fa-toolbox text-brand-500 mr-1"></i> เลือกอุปกรณ์:`;
           chkList.innerHTML = '';
 
-          const sourceList = isMaterial ? appData.materials : appData.equipments;
+          const sourceList = isMaterial ? window.appData.materials : window.appData.equipments;
           let existingItems = [];
           if (_editTxIdTemp && _editTxIdTemp.subCategory) {
             existingItems = _editTxIdTemp.subCategory.split(', ').map(s => s.trim());
@@ -1503,7 +1571,7 @@
       const note = document.getElementById('txNote').value.trim();
       const editId = document.getElementById('editTxId').value;
 
-      const catObj = appData.categories[type].find(c => c.name === category);
+      const catObj = window.appData.categories[type].find(c => c.name === category);
       let subCategory = '';
 
       if (catObj && (catObj.flags?.isMaterialCategory || catObj.flags?.isEquipmentCategory)) {
@@ -1514,15 +1582,15 @@
       }
 
       const txObj = {
-        id: editId || Date.now().toString(),
+        id: editId || (crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2))),
         type, date, time, category, subCategory, amount: amountVal, note
       };
 
       if(editId) {
-        const idx = appData.transactions.findIndex(t => t.id === editId);
-        if(idx > -1) appData.transactions[idx] = txObj;
+        const idx = window.appData.transactions.findIndex(t => t.id === editId);
+        if(idx > -1) window.appData.transactions[idx] = txObj;
       } else {
-        appData.transactions.push(txObj);
+        window.appData.transactions.push(txObj);
       }
 
       window.saveTransactionToFirestore(txObj);
@@ -1535,13 +1603,13 @@
     }
 
     window.editTransaction = function(id) {
-      const tx = appData.transactions.find(t=>t.id===id);
+      const tx = window.appData.transactions.find(t=>t.id===id);
       if(tx) openTransactionModal(tx.type, id);
     }
 
     window.deleteTransaction = function(id) {
       window.showConfirmModal("ยืนยันการลบ", "คุณต้องการลบรายการนี้ใช่หรือไม่?", () => {
-        appData.transactions = appData.transactions.filter(t => t.id !== id);
+        window.appData.transactions = window.appData.transactions.filter(t => t.id !== id);
         window.deleteTransactionFromFirestore(id);
         window.refreshDashboard();
         if(!document.getElementById('calendarDayModal').classList.contains('hidden')) {
@@ -1567,7 +1635,7 @@
     }
 
     window.openGoalDetailModal = function() {
-      document.getElementById('customGoalInput').value = appData.customGoal || '';
+      document.getElementById('customGoalInput').value = window.appData.customGoal || '';
       const filteredTx = window.getFilteredTransactions();
       let exp = 0;
       filteredTx.filter(t=>t.type==='expense').forEach(t=> exp += Number(t.amount));
@@ -1579,7 +1647,7 @@
 
     window.saveCustomGoal = function() {
       const val = document.getElementById('customGoalInput').value;
-      if(val) appData.customGoal = Number(val);
+      if(val) window.appData.customGoal = Number(val);
       window.syncDataToCloud();
       window.refreshDashboard();
       window.showToast('ตั้งเป้าหมายสำเร็จ');
@@ -1587,7 +1655,7 @@
     }
 
     window.clearCustomGoal = function() {
-      appData.customGoal = null;
+      window.appData.customGoal = null;
       document.getElementById('customGoalInput').value = '';
       window.syncDataToCloud();
       window.refreshDashboard();
@@ -1655,7 +1723,7 @@
 
     window.loadMoreHistory = function() {
       historyDisplayLimit += 50;
-      refreshDashboard();
+      window.refreshDashboard();
     };
 
     window.loadMoreReport = function() {
@@ -1689,7 +1757,7 @@
     };
 
     window.exportDataToJSON = function() {
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appData));
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(window.appData));
       const downloadAnchorNode = document.createElement('a');
       downloadAnchorNode.setAttribute("href", dataStr);
       downloadAnchorNode.setAttribute("download", `somtum-backup-${window.getLocalYYYYMMDD()}.json`);
@@ -1711,9 +1779,7 @@
           }
           window.showConfirmModal("ยืนยันการนำเข้าข้อมูล", "ข้อมูลใหม่จะถูกนำมาแทนที่ข้อมูลปัจจุบัน คุณต้องการดำเนินการต่อหรือไม่?", async () => {
             window.showToast("กำลังนำเข้าข้อมูล...");
-            window.appData = parsed;
-            if (!window.appData.materials) window.appData.materials = [...window.DEFAULT_MATERIALS];
-            if (!window.appData.equipments) window.appData.equipments = [...window.DEFAULT_EQUIPMENTS];
+            window.appData = window.sanitizeAppData(parsed);
             window.syncDataToCloud();
 
             if (window.currentUser) {
@@ -1804,7 +1870,7 @@
 
       for(let day=1;day<=days;day++) {
         const dStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-        const txs = (appData.transactions||[]).filter(t => t.date === dStr);
+        const txs = (window.appData.transactions||[]).filter(t => t.date === dStr);
         let html = `<div class="flex justify-between items-center px-0.5"><span class="text-[10px]">${day}</span></div>`;
 
         if(txs.length > 0) {
@@ -1814,8 +1880,6 @@
             ${inc>0 ? `<span class="text-[8px] font-bold text-emerald-600 block">+${inc.toLocaleString()}</span>` : ''}
             ${exp>0 ? `<span class="text-[8px] font-bold text-rose-500 block">-${exp.toLocaleString()}</span>` : ''}
           </div>`;
-        } else if (dStr < todayStr) {
-          html += `<div class="text-center w-full mt-2 text-[10px] text-gray-400 font-medium">หยุด</div>`;
         }
 
         const isToday = (dStr === todayStr) ? 'ring-2 ring-brand-500 bg-brand-50' : 'bg-gray-50 border-gray-100';
@@ -1825,7 +1889,7 @@
 
     window.openCalendarDayModal = function(dStr) {
       selectedCalendarDay = dStr;
-      const txs = (appData.transactions || []).filter(t => t.date === dStr);
+      const txs = (window.appData.transactions || []).filter(t => t.date === dStr);
       let inc = 0, exp = 0;
       txs.forEach(t => {
         if(t.type === 'income') inc += Number(t.amount);
@@ -1860,7 +1924,7 @@
       if(!list) return;
       list.innerHTML = '';
 
-      (appData.categories[managerType] || []).forEach((cat, i) => {
+      (window.appData.categories[managerType] || []).forEach((cat, i) => {
         let subs = '';
         if(cat.subs && cat.subs.length > 0) {
           subs = cat.subs.map((s, j) => `<span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[10px] inline-flex items-center gap-1 mb-1">${escapeHTML(s)} <button onclick="deleteSubCategory(${i}, ${j})" class="text-gray-400 hover:text-rose-500"><i class="fa-solid fa-xmark"></i></button></span>`).join(' ');
@@ -1891,7 +1955,7 @@
 
       const isMaterial = document.getElementById('newCatIsMaterial').checked;
       const isEquipment = document.getElementById('newCatIsEquipment').checked;
-      const cats = appData.categories[managerType];
+      const cats = window.appData.categories[managerType];
 
       if(cats.some(c => c.name.toLowerCase() === name.toLowerCase())) {
         alert('มีหมวดหมู่นี้อยู่แล้ว');
@@ -1917,7 +1981,7 @@
 
     window.deleteMainCategory = function(i) {
       window.showConfirmModal("ยืนยันการลบหมวดหมู่", "การลบหมวดหมู่หลักจะทำให้รายการย่อยทั้งหมดถูกลบด้วย", () => {
-        appData.categories[managerType].splice(i, 1);
+        window.appData.categories[managerType].splice(i, 1);
         window.syncDataToCloud();
         window.renderCategoryTree();
         window.showToast('ลบหมวดหมู่แล้ว');
@@ -1929,7 +1993,7 @@
       const val = input.value.trim();
       if(!val) return;
 
-      const cat = appData.categories[managerType][i];
+      const cat = window.appData.categories[managerType][i];
       if(!cat.subs) cat.subs = [];
       if(cat.subs.includes(val)) {
         alert('มีรายการย่อยนี้อยู่แล้ว');
@@ -1944,7 +2008,7 @@
     }
 
     window.deleteSubCategory = function(i, j) {
-      appData.categories[managerType][i].subs.splice(j, 1);
+      window.appData.categories[managerType][i].subs.splice(j, 1);
       window.syncDataToCloud();
       window.renderCategoryTree();
       window.showToast('ลบรายการย่อยแล้ว');
@@ -1955,10 +2019,10 @@
       if(!list) return;
       list.innerHTML = '';
 
-      appData.materials.forEach((m, idx) => {
+      window.appData.materials.forEach((m, idx) => {
         list.innerHTML += `<span class="bg-amber-50 text-amber-900 border border-amber-200 px-2.5 py-1 rounded-xl text-[11px] inline-flex items-center gap-1.5 font-medium">${escapeHTML(m)} <button onclick="deleteMaterialItem('วัตถุดิบ', ${idx})" class="text-amber-700 hover:text-rose-600"><i class="fa-solid fa-xmark"></i></button></span>`;
       });
-      appData.equipments.forEach((eq, idx) => {
+      window.appData.equipments.forEach((eq, idx) => {
         list.innerHTML += `<span class="bg-blue-50 text-blue-900 border border-blue-200 px-2.5 py-1 rounded-xl text-[11px] inline-flex items-center gap-1.5 font-medium">${escapeHTML(eq)} <button onclick="deleteMaterialItem('อุปกรณ์', ${idx})" class="text-blue-700 hover:text-rose-600"><i class="fa-solid fa-xmark"></i></button></span>`;
       });
     }
@@ -1970,11 +2034,11 @@
       if(!name) return;
 
       if(type === 'วัตถุดิบ') {
-        if(appData.materials.includes(name)) { alert('มีรายการนี้อยู่แล้ว'); return; }
-        appData.materials.push(name);
+        if(window.appData.materials.includes(name)) { alert('มีรายการนี้อยู่แล้ว'); return; }
+        window.appData.materials.push(name);
       } else {
-        if(appData.equipments.includes(name)) { alert('มีรายการนี้อยู่แล้ว'); return; }
-        appData.equipments.push(name);
+        if(window.appData.equipments.includes(name)) { alert('มีรายการนี้อยู่แล้ว'); return; }
+        window.appData.equipments.push(name);
       }
 
       nameInput.value = '';
@@ -1984,13 +2048,67 @@
     }
 
     window.deleteMaterialItem = function(type, idx) {
-      if(type === 'วัตถุดิบ') appData.materials.splice(idx, 1);
-      else appData.equipments.splice(idx, 1);
+      if(type === 'วัตถุดิบ') window.appData.materials.splice(idx, 1);
+      else window.appData.equipments.splice(idx, 1);
 
       window.syncDataToCloud();
       window.renderMaterialTags();
       window.showToast('ลบรายการสำเร็จ');
     }
+
+    window.resetAllData = function() {
+      window.showConfirmModal(
+        "ยืนยันการล้างข้อมูลทั้งหมด",
+        "ข้อมูลรายรับ-รายจ่าย หมวดหมู่ และเป้าหมายทั้งหมดจะถูกลบทั้งในเครื่องและบน Cloud (ถ้าล็อกอินอยู่) การกระทำนี้ไม่สามารถย้อนกลับได้",
+        async () => {
+          window.showToast("กำลังล้างข้อมูล...");
+          // Reset local
+          window.appData = {
+            transactions: [],
+            categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
+            materials: [...window.DEFAULT_MATERIALS],
+            equipments: [...window.DEFAULT_EQUIPMENTS],
+            customGoal: null
+          };
+          window.saveLocalOnly();
+          localStorage.removeItem('somtumHasUnsyncedData');
+          localStorage.removeItem('somtumLastSyncedTimestamp');
+
+          // If logged in, clear cloud too
+          if (window.currentUser && window.db) {
+            try {
+              const settingsRef = window.doc(window.db, "users", window.currentUser.uid, "meta", "settings");
+              await window.setDoc(settingsRef, {
+                categories: window.appData.categories,
+                materials: window.appData.materials,
+                equipments: window.appData.equipments,
+                customGoal: null,
+                updatedAt: new Date().toISOString()
+              });
+              const txCollRef = window.collection(window.db, "users", window.currentUser.uid, "transactions");
+              const snap = await window.getDocs(txCollRef);
+              let batch = window.writeBatch(window.db);
+              let count = 0;
+              for (const d of snap.docs) {
+                batch.delete(d.ref);
+                count++;
+                if (count >= 400) {
+                  await batch.commit();
+                  batch = window.writeBatch(window.db);
+                  count = 0;
+                }
+              }
+              if (count > 0) await batch.commit();
+            } catch (e) {
+              console.error("Reset cloud error:", e);
+            }
+          }
+          window.refreshDashboard();
+          window.showToast("ล้างข้อมูลทั้งหมดเรียบร้อยแล้ว");
+        }
+      );
+    };
+
   </script>
 </body>
 </html>
