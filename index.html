@@ -898,7 +898,6 @@
     };
 
     window.saveTransactionToFirestore = async function(txObj) {
-      window.saveLocalOnly();
       if (!window.currentUser) {
         localStorage.setItem('somtumHasUnsyncedData', 'true');
         return;
@@ -910,11 +909,12 @@
         window.updateSyncUI(true);
       } catch (e) {
         console.error("Save tx error:", e);
+        window.updateSyncUI(false);
+        throw e; // let caller show error toast
       }
     };
 
     window.deleteTransactionFromFirestore = async function(txId) {
-      window.saveLocalOnly();
       if (!window.currentUser) {
         localStorage.setItem('somtumHasUnsyncedData', 'true');
         return;
@@ -926,13 +926,18 @@
         window.updateSyncUI(true);
       } catch (e) {
         console.error("Delete tx error:", e);
+        window.updateSyncUI(false);
+        throw e;
       }
     };
 
     window.saveLocalOnly = function() {
       try {
         localStorage.setItem('somtumAppData', JSON.stringify(window.appData));
-      } catch (e) {}
+      } catch (e) {
+        console.error("saveLocalOnly failed:", e);
+        throw e; // surface QuotaExceededError etc.
+      }
     };
   </script>
 
@@ -1582,7 +1587,7 @@
       document.getElementById('transactionModal').classList.add('hidden');
     }
 
-    window.handleFormSubmit = function(e) {
+    window.handleFormSubmit = async function(e) {
       e.preventDefault();
       calculateAmount();
       const amountVal = Number(document.getElementById('txAmount').value);
@@ -1620,9 +1625,24 @@
         window.appData.transactions.push(txObj);
       }
 
-      window.saveTransactionToFirestore(txObj);
+      // Save local first (with error feedback)
+      try {
+        window.saveLocalOnly();
+      } catch (err) {
+        window.showToast('บันทึกลงเครื่องล้มเหลว (ที่เก็บข้อมูลอาจเต็ม)', 'error');
+        return;
+      }
+
       closeTransactionModal();
-      window.showToast(editId ? 'อัปเดตข้อมูลแล้ว' : 'บันทึกข้อมูลเรียบร้อย');
+
+      // Then try cloud
+      try {
+        await window.saveTransactionToFirestore(txObj);
+        window.showToast(editId ? 'อัปเดตข้อมูลแล้ว' : 'บันทึกข้อมูลเรียบร้อย');
+      } catch (err) {
+        console.error(err);
+        window.showToast('บันทึกลงเครื่องแล้ว แต่ซิงค์ Cloud ล้มเหลว', 'error');
+      }
 
       if(!document.getElementById('calendarDayModal').classList.contains('hidden')) {
         openCalendarDayModal(selectedCalendarDay);
@@ -1638,9 +1658,14 @@
     }
 
     window.deleteTransaction = function(id) {
-      window.showConfirmModal("ยืนยันการลบ", "คุณต้องการลบรายการนี้ใช่หรือไม่?", () => {
+      window.showConfirmModal("ยืนยันการลบ", "คุณต้องการลบรายการนี้ใช่หรือไม่?", async () => {
         window.appData.transactions = window.appData.transactions.filter(t => t.id !== id);
-        window.deleteTransactionFromFirestore(id);
+        try {
+          window.saveLocalOnly();
+        } catch (err) {
+          window.showToast('ลบในเครื่องล้มเหลว', 'error');
+          return;
+        }
         window.refreshDashboard();
         if(!document.getElementById('calendarDayModal').classList.contains('hidden')) {
           openCalendarDayModal(selectedCalendarDay);
@@ -1648,7 +1673,13 @@
         if(!document.getElementById('cardDetailModal').classList.contains('hidden') && lastCardDetailType) {
           openCardDetailModal(lastCardDetailType);
         }
-        window.showToast('ลบรายการเรียบร้อย');
+        try {
+          await window.deleteTransactionFromFirestore(id);
+          window.showToast('ลบรายการเรียบร้อย');
+        } catch (err) {
+          console.error(err);
+          window.showToast('ลบในเครื่องแล้ว แต่ซิงค์ Cloud ล้มเหลว', 'error');
+        }
       });
     }
 
@@ -1690,17 +1721,34 @@
     window.openGoalDetailModal = function() {
       document.getElementById('customGoalInput').value = window.appData.customGoal || '';
       const filteredTx = window.getFilteredTransactions();
-      let exp = 0;
-      filteredTx.filter(t=>t.type==='expense').forEach(t=> exp += Number(t.amount));
-      const calc = exp * 1.6;
-
-      document.getElementById('goalCalculationBreakdown').innerHTML = `สูตร (รายจ่าย + 60% จากตัวกรองปัจจุบัน): ฿${calc.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+      let totalIncome = 0, totalExpense = 0;
+      filteredTx.forEach(t => {
+        if (t.type === 'income') totalIncome += Number(t.amount);
+        else totalExpense += Number(t.amount);
+      });
+      let calc = totalExpense > 0 ? totalExpense * 1.6 : (totalIncome > 0 ? totalIncome : 1000);
+      let formulaText = '';
+      if (window.appData.customGoal && window.appData.customGoal > 0) {
+        formulaText = `เป้าหมายที่ตั้งเอง: ฿${Number(window.appData.customGoal).toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+      } else if (totalExpense > 0) {
+        formulaText = `สูตร (รายจ่าย × 1.6): ฿${calc.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+      } else if (totalIncome > 0) {
+        formulaText = `ไม่มีรายจ่าย → ใช้ยอดรายรับเป็นเป้าหมาย: ฿${calc.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+      } else {
+        formulaText = `ยังไม่มีข้อมูล → เป้าหมายเริ่มต้น ฿1,000.00`;
+      }
+      document.getElementById('goalCalculationBreakdown').innerHTML = formulaText;
       document.getElementById('goalDetailModal').classList.remove('hidden');
     }
 
     window.saveCustomGoal = function() {
-      const val = document.getElementById('customGoalInput').value;
-      if(val) window.appData.customGoal = Number(val);
+      const raw = document.getElementById('customGoalInput').value.trim();
+      const val = Number(raw);
+      if (!raw || isNaN(val) || val <= 0) {
+        alert('กรุณาใส่เป้าหมายที่เป็นตัวเลขมากกว่า 0');
+        return;
+      }
+      window.appData.customGoal = val;
       window.syncDataToCloud();
       window.refreshDashboard();
       window.showToast('ตั้งเป้าหมายสำเร็จ');
@@ -1790,12 +1838,16 @@
         alert('ไม่มีข้อมูลบัญชีตามช่วงเวลาหรือเงื่อนไขที่เลือก');
         return;
       }
+      // Helper to neutralize CSV formula injection and escape quotes
+      const safe = (val) => {
+        let s = String(val == null ? '' : val).replace(/"/g, '""');
+        if (/^[=+\-@]/.test(s)) s = "'" + s; // prevent formula injection
+        return s;
+      };
       let csv = "\uFEFFวันที่,เวลา,ประเภท,หมวดหมู่,รายการย่อย,จำนวนเงิน(บาท),โน้ต\n";
       txs.forEach(t => {
         const typeStr = t.type === 'income' ? 'รายรับ' : 'รายจ่าย';
-        const cleanNote = (t.note || '').replace(/"/g, '""');
-        const cleanSub = (t.subCategory || '').replace(/"/g, '""');
-        csv += `"${t.date}","${t.time || ''}","${typeStr}","${t.category}","${cleanSub}","${t.amount}","${cleanNote}"\n`;
+        csv += `"${safe(t.date)}","${safe(t.time || '')}","${safe(typeStr)}","${safe(t.category)}","${safe(t.subCategory || '')}","${safe(t.amount)}","${safe(t.note || '')}"\n`;
       });
 
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -2051,7 +2103,12 @@
     }
 
     window.deleteMainCategory = function(i) {
-      window.showConfirmModal("ยืนยันการลบหมวดหมู่", "การลบหมวดหมู่หลักจะทำให้รายการย่อยทั้งหมดถูกลบด้วย", () => {
+      const catName = window.appData.categories[managerType][i]?.name || '';
+      const usedCount = (window.appData.transactions || []).filter(t => t.category === catName && t.type === managerType).length;
+      const warnMsg = usedCount > 0
+        ? `หมวดหมู่นี้ถูกใช้ใน ${usedCount} รายการแล้ว การลบอาจทำให้รายการเก่าแสดงหมวดหมู่ไม่ถูกต้อง ต้องการลบจริงหรือไม่?`
+        : "การลบหมวดหมู่หลักจะทำให้รายการย่อยทั้งหมดถูกลบด้วย";
+      window.showConfirmModal("ยืนยันการลบหมวดหมู่", warnMsg, () => {
         window.appData.categories[managerType].splice(i, 1);
         window.syncDataToCloud();
         window.renderCategoryTree();
@@ -2125,7 +2182,11 @@
       const itemName = type === 'วัตถุดิบ'
         ? (window.appData.materials[idx] || 'รายการนี้')
         : (window.appData.equipments[idx] || 'รายการนี้');
-      window.showConfirmModal("ยืนยันการลบ", `ต้องการลบ${type} "${itemName}" ใช่หรือไม่?`, () => {
+      const usedCount = (window.appData.transactions || []).filter(t => (t.subCategory || '').includes(itemName)).length;
+      const warnMsg = usedCount > 0
+        ? `"${itemName}" ถูกใช้ใน ${usedCount} รายการแล้ว การลบอาจทำให้รายการเก่าหายจาก checklist ต้องการลบจริงหรือไม่?`
+        : `ต้องการลบ${type} "${itemName}" ใช่หรือไม่?`;
+      window.showConfirmModal("ยืนยันการลบ", warnMsg, () => {
         if(type === 'วัตถุดิบ') window.appData.materials.splice(idx, 1);
         else window.appData.equipments.splice(idx, 1);
         window.syncDataToCloud();
@@ -2337,13 +2398,13 @@
       window.showToast('สร้างไฟล์ PDF เรียบร้อย (หมายเหตุ: ภาษาไทยอาจแสดงไม่สมบูรณ์ในบางฟอนต์)');
     };
 
-    // Init notification permission
+    // Init notification permission (safe)
     if (typeof window.finishLoading === 'function') {
       const origFinish = window.finishLoading;
       window.finishLoading = function() {
         origFinish();
-        if (Notification.permission === 'default') {
-          setTimeout(() => Notification.requestPermission(), 3000);
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          setTimeout(() => Notification.requestPermission().catch(()=>{}), 3000);
         }
       };
     }
