@@ -373,7 +373,7 @@
 
   <!-- Modal Form: Add / Edit Transaction -->
   <div id="transactionModal" class="fixed inset-0 bg-black/50 z-[60] flex items-end sm:items-center justify-center hidden p-0 sm:p-4 transition-opacity duration-200">
-    <div class="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col overflow-hidden shadow-xl">
+    <div class="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[95vh] flex flex-col overflow-hidden shadow-xl">
       <div id="modalHeaderBg" class="p-4 text-white flex justify-between items-center bg-brand-600">
         <h3 id="modalTitle" class="font-bold text-base"><i class="fa-solid fa-pen-to-square mr-2"></i>บันทึกรายการ</h3>
         <button onclick="closeTransactionModal()" class="text-white/80 hover:text-white text-xl font-bold px-2">&times;</button>
@@ -440,7 +440,7 @@
 
   <!-- Calendar Day Modal -->
   <div id="calendarDayModal" class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center hidden p-0 sm:p-4 transition-opacity duration-200">
-    <div class="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col overflow-hidden shadow-xl">
+    <div class="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[95vh] flex flex-col overflow-hidden shadow-xl">
       <div class="p-4 text-white flex justify-between items-center bg-gradient-to-r from-brand-600 to-amber-600">
         <div>
           <h3 id="calModalTitle" class="font-bold text-base"><i class="fa-solid fa-calendar-day"></i> บันทึกข้อมูลวันที่</h3>
@@ -467,7 +467,7 @@
           <button onclick="openAddTxFromCalendar('expense')" class="bg-rose-600 text-white py-2 px-3 rounded-xl text-xs">+ เพิ่มรายจ่าย</button>
         </div>
         <div class="pt-2">
-          <div id="calDayTxList" class="space-y-2 max-h-60 overflow-y-auto pr-1"></div>
+          <div id="calDayTxList" class="space-y-2 pr-1"></div>
         </div>
       </div>
     </div>
@@ -475,14 +475,14 @@
 
   <!-- Drill-down Detail Modal -->
   <div id="cardDetailModal" class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center hidden p-0 sm:p-4">
-    <div class="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col overflow-hidden shadow-xl">
+    <div class="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[95vh] flex flex-col overflow-hidden shadow-xl">
       <div id="cardDetailHeader" class="p-4 text-white flex justify-between items-center bg-brand-600">
         <h3 id="cardDetailTitle" class="font-bold text-base"><i class="fa-solid fa-list-ul mr-2"></i>รายละเอียดข้อมูล</h3>
         <button onclick="document.getElementById('cardDetailModal').classList.add('hidden')" class="text-white/80 hover:text-white text-xl font-bold px-2">&times;</button>
       </div>
       <div class="p-4 overflow-y-auto space-y-3 text-xs flex-1">
         <div id="cardDetailSummary" class="p-3 bg-gray-50 rounded-2xl border text-center font-bold text-sm"></div>
-        <div id="cardDetailItems" class="space-y-2 max-h-80 overflow-y-auto pr-1"></div>
+        <div id="cardDetailItems" class="space-y-2 pr-1"></div>
       </div>
     </div>
   </div>
@@ -1031,6 +1031,7 @@
     let currentReportTab = 'income';
     let historyDisplayLimit = 50;
     let reportDisplayLimit = 50;
+    let lastCardDetailType = null;
 
     window.finishLoading = function() {
       const overlay = document.getElementById('loadingOverlay');
@@ -1180,8 +1181,11 @@
         } else if (currentFilter === 'daily') {
           timeMatch = (tx.date === getLocalYYYYMMDD());
         } else if (currentFilter === 'weekly') {
+          // เริ่มสัปดาห์วันจันทร์ (มาตรฐานไทย)
+          const day = now.getDay(); // 0=อา, 1=จ, ...
+          const diff = day === 0 ? -6 : 1 - day;
           const startOfWeek = new Date(now);
-          startOfWeek.setDate(now.getDate() - now.getDay());
+          startOfWeek.setDate(now.getDate() + diff);
           startOfWeek.setHours(0, 0, 0, 0);
           const endOfWeek = new Date(startOfWeek);
           endOfWeek.setDate(startOfWeek.getDate() + 6);
@@ -1600,6 +1604,9 @@
       if(!document.getElementById('calendarDayModal').classList.contains('hidden')) {
         openCalendarDayModal(selectedCalendarDay);
       }
+      if(!document.getElementById('cardDetailModal').classList.contains('hidden') && lastCardDetailType) {
+        openCardDetailModal(lastCardDetailType);
+      }
     }
 
     window.editTransaction = function(id) {
@@ -1615,21 +1622,44 @@
         if(!document.getElementById('calendarDayModal').classList.contains('hidden')) {
           openCalendarDayModal(selectedCalendarDay);
         }
+        if(!document.getElementById('cardDetailModal').classList.contains('hidden') && lastCardDetailType) {
+          openCardDetailModal(lastCardDetailType);
+        }
         window.showToast('ลบรายการเรียบร้อย');
       });
     }
 
     window.openCardDetailModal = function(cardType) {
+      lastCardDetailType = cardType;
       const modal = document.getElementById('cardDetailModal');
       const itemsContainer = document.getElementById('cardDetailItems');
+      const header = document.getElementById('cardDetailHeader');
+      const title = document.getElementById('cardDetailTitle');
       const filteredTx = window.getFilteredTransactions();
       let listData = [];
+      let totalAmount = 0;
 
-      if (cardType === 'income') listData = filteredTx.filter(t => t.type === 'income');
-      else if (cardType === 'expense') listData = filteredTx.filter(t => t.type === 'expense');
-      else listData = filteredTx;
+      if (cardType === 'income') {
+        listData = filteredTx.filter(t => t.type === 'income');
+        header.className = "p-4 text-white flex justify-between items-center bg-emerald-600";
+        title.innerHTML = `<i class="fa-solid fa-wallet mr-2"></i>รายละเอียดรายรับ`;
+      } else if (cardType === 'expense') {
+        listData = filteredTx.filter(t => t.type === 'expense');
+        header.className = "p-4 text-white flex justify-between items-center bg-rose-600";
+        title.innerHTML = `<i class="fa-solid fa-receipt mr-2"></i>รายละเอียดรายจ่าย`;
+      } else {
+        listData = filteredTx;
+        header.className = "p-4 text-white flex justify-between items-center bg-brand-600";
+        title.innerHTML = `<i class="fa-solid fa-chart-line mr-2"></i>รายละเอียดกำไร/ขาดทุน`;
+      }
 
-      document.getElementById('cardDetailSummary').innerText = `พบข้อมูลทั้งหมด ${listData.length} รายการ (ตามตัวกรองเวลาปัจจุบัน)`;
+      listData.forEach(t => totalAmount += Number(t.amount) || 0);
+
+      document.getElementById('cardDetailSummary').innerHTML = `
+        <div>พบข้อมูลทั้งหมด <strong>${listData.length}</strong> รายการ (ตามตัวกรองเวลาปัจจุบัน)</div>
+        <div class="mt-1 text-base ${cardType === 'expense' ? 'text-rose-600' : (cardType === 'income' ? 'text-emerald-600' : 'text-brand-600')}">
+          รวม ${cardType === 'expense' ? '-' : (cardType === 'income' ? '+' : '')}฿${totalAmount.toLocaleString('th-TH', {minimumFractionDigits: 2})}
+        </div>`;
       window.renderDrillDownAccordion(listData, itemsContainer, 'kpiModal');
       modal.classList.remove('hidden');
     }
