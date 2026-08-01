@@ -614,6 +614,8 @@
           localStorage.removeItem('somtumAutoBackupTime');
           localStorage.removeItem('somtumAutoBackupUid');
           localStorage.removeItem('somtumLastGoalNotified');
+          // Reset in-memory backup hash so next session starts clean
+          if (typeof lastAutoBackupHash !== 'undefined') lastAutoBackupHash = '';
           window.appData = {
             transactions: [],
             categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
@@ -671,6 +673,7 @@
       document.getElementById('guestMergeModal').classList.add('hidden');
       if (!window.currentUser) return;
 
+      try {
       if (action === 'merge') {
         window.showToast("กำลังนำเข้าข้อมูล...");
         const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
@@ -775,6 +778,12 @@
       localStorage.setItem('somtumDataOwnerUid', window.currentUser.uid);
       pendingGuestData = null;
       window.initFirestoreListeners();
+      } catch (err) {
+        console.error("Guest merge error:", err);
+        window.showToast('เกิดข้อผิดพลาดขณะรวมข้อมูล กรุณาลองใหม่', 'error');
+        // Still try to init listeners so the app is usable
+        try { window.initFirestoreListeners(); } catch(e) {}
+      }
     };
 
     window.initFirestoreListeners = function() {
@@ -1016,19 +1025,21 @@
         data.customGoal = null;
       }
       data.transactions = data.transactions.filter(tx => {
+        // Validate date format YYYY-MM-DD
+        const dateOk = typeof tx.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(tx.date);
         return tx && typeof tx === 'object'
           && (tx.type === 'income' || tx.type === 'expense')
-          && typeof tx.date === 'string'
+          && dateOk
           && !isNaN(Number(tx.amount)) && Number(tx.amount) > 0;
       }).map(tx => ({
         id: String(tx.id || (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2))),
         type: tx.type,
         date: tx.date,
-        time: tx.time || '00:00',
-        category: String(tx.category || 'ไม่ระบุ'),
-        subCategory: tx.subCategory ? String(tx.subCategory) : '',
+        time: (typeof tx.time === 'string' && /^\d{2}:\d{2}/.test(tx.time)) ? tx.time.slice(0,5) : '00:00',
+        category: String(tx.category || 'ไม่ระบุ').slice(0, 100),
+        subCategory: tx.subCategory ? String(tx.subCategory).slice(0, 200) : '',
         amount: Number(Number(tx.amount).toFixed(2)),
-        note: tx.note ? String(tx.note) : ''
+        note: tx.note ? String(tx.note).slice(0, 500) : ''
       }));
       return data;
     };
@@ -2211,6 +2222,11 @@
           window.saveLocalOnly();
           localStorage.removeItem('somtumHasUnsyncedData');
           localStorage.removeItem('somtumLastSyncedTimestamp');
+          localStorage.removeItem('somtumAutoBackup');
+          localStorage.removeItem('somtumAutoBackupTime');
+          localStorage.removeItem('somtumAutoBackupUid');
+          localStorage.removeItem('somtumLastGoalNotified');
+          if (typeof lastAutoBackupHash !== 'undefined') lastAutoBackupHash = '';
 
           if (window.currentUser && window.db) {
             try {
@@ -2324,9 +2340,19 @@
     window.restoreAutoBackup = function() {
       const bak = localStorage.getItem('somtumAutoBackup');
       const t = localStorage.getItem('somtumAutoBackupTime');
+      const bakUid = localStorage.getItem('somtumAutoBackupUid');
       if (!bak) {
         alert('ยังไม่มี Auto Backup');
         return;
+      }
+      // Prevent restoring another user's backup
+      if (window.currentUser && bakUid && bakUid !== window.currentUser.uid) {
+        alert('Auto Backup นี้เป็นของบัญชีอื่น ไม่สามารถกู้คืนได้');
+        return;
+      }
+      if (!window.currentUser && bakUid) {
+        // Guest trying to restore a logged-in user's backup
+        if (!confirm('Auto Backup นี้สร้างจากบัญชีที่ล็อกอินอยู่ ต้องการกู้คืนเป็นข้อมูล Guest ใช่หรือไม่?')) return;
       }
       window.showConfirmModal('กู้คืนจาก Auto Backup', 'ข้อมูลปัจจุบันจะถูกแทนที่ด้วยสำรองเมื่อ ' + (t ? new Date(t).toLocaleString('th-TH') : 'ไม่ทราบเวลา') + ' ต้องการดำเนินการต่อหรือไม่?', () => {
         try {
