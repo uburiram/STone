@@ -1728,7 +1728,7 @@
 
     window.loadMoreReport = function() {
       reportDisplayLimit += 50;
-      renderCategoryReport(currentReportTab);
+      window.renderCategoryReport(currentReportTab);
     };
 
     window.exportDataToCSV = function() {
@@ -1866,24 +1866,40 @@
       grid.innerHTML = '';
       const todayStr = getLocalYYYYMMDD();
 
-      for(let i=0;i<firstDay;i++) grid.innerHTML += `<div class="p-1 min-h-[64px] bg-gray-50/30 rounded-xl"></div>`;
+      for(let i=0;i<firstDay;i++) grid.innerHTML += `<div class="p-1 min-h-[72px] bg-gray-50/30 rounded-xl"></div>`;
 
       for(let day=1;day<=days;day++) {
         const dStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
         const txs = (window.appData.transactions||[]).filter(t => t.date === dStr);
-        let html = `<div class="flex justify-between items-center px-0.5"><span class="text-[10px]">${day}</span></div>`;
+        let html = `<div class="flex justify-between items-center px-0.5 w-full"><span class="text-[10px] font-semibold">${day}</span></div>`;
+
+        let cellBg = 'bg-gray-50 border-gray-100';
+        let net = 0;
 
         if(txs.length > 0) {
-          let inc=0,exp=0;
-          txs.forEach(t=>t.type==='income'?inc+=Number(t.amount):exp+=Number(t.amount));
-          html += `<div class="text-center w-full mt-1">
+          let inc=0, exp=0;
+          txs.forEach(t => t.type==='income' ? inc+=Number(t.amount) : exp+=Number(t.amount));
+          net = inc - exp;
+
+          // สีพื้นหลังตามกำไร/ขาดทุน
+          if (net > 0) {
+            cellBg = 'bg-emerald-50 border-emerald-200';
+          } else if (net < 0) {
+            cellBg = 'bg-rose-50 border-rose-200';
+          } else {
+            cellBg = 'bg-gray-50 border-gray-200';
+          }
+
+          html += `<div class="text-center w-full mt-0.5 leading-tight">
             ${inc>0 ? `<span class="text-[8px] font-bold text-emerald-600 block">+${inc.toLocaleString()}</span>` : ''}
             ${exp>0 ? `<span class="text-[8px] font-bold text-rose-500 block">-${exp.toLocaleString()}</span>` : ''}
+            <span class="text-[8px] font-extrabold block mt-0.5 ${net >= 0 ? 'text-emerald-700' : 'text-rose-700'}">${net >= 0 ? '+' : ''}${net.toLocaleString()}</span>
           </div>`;
         }
 
-        const isToday = (dStr === todayStr) ? 'ring-2 ring-brand-500 bg-brand-50' : 'bg-gray-50 border-gray-100';
-        grid.innerHTML += `<div onclick="openCalendarDayModal('${dStr}')" class="p-1 min-h-[64px] rounded-xl border flex flex-col items-center transition-all cursor-pointer hover:bg-brand-100 ${isToday}">${html}</div>`;
+        // วันนี้เน้นด้วย ring (ทับสีพื้นได้)
+        const todayRing = (dStr === todayStr) ? 'ring-2 ring-brand-500' : '';
+        grid.innerHTML += `<div onclick="openCalendarDayModal('${dStr}')" class="p-1 min-h-[72px] rounded-xl border flex flex-col items-center transition-all cursor-pointer hover:opacity-90 ${cellBg} ${todayRing}">${html}</div>`;
       }
     }
 
@@ -2008,10 +2024,13 @@
     }
 
     window.deleteSubCategory = function(i, j) {
-      window.appData.categories[managerType][i].subs.splice(j, 1);
-      window.syncDataToCloud();
-      window.renderCategoryTree();
-      window.showToast('ลบรายการย่อยแล้ว');
+      const subName = window.appData.categories[managerType][i]?.subs?.[j] || 'รายการนี้';
+      window.showConfirmModal("ยืนยันการลบรายการย่อย", `ต้องการลบ "${subName}" ใช่หรือไม่?`, () => {
+        window.appData.categories[managerType][i].subs.splice(j, 1);
+        window.syncDataToCloud();
+        window.renderCategoryTree();
+        window.showToast('ลบรายการย่อยแล้ว');
+      });
     }
 
     window.renderMaterialTags = function() {
@@ -2048,12 +2067,16 @@
     }
 
     window.deleteMaterialItem = function(type, idx) {
-      if(type === 'วัตถุดิบ') window.appData.materials.splice(idx, 1);
-      else window.appData.equipments.splice(idx, 1);
-
-      window.syncDataToCloud();
-      window.renderMaterialTags();
-      window.showToast('ลบรายการสำเร็จ');
+      const itemName = type === 'วัตถุดิบ'
+        ? (window.appData.materials[idx] || 'รายการนี้')
+        : (window.appData.equipments[idx] || 'รายการนี้');
+      window.showConfirmModal("ยืนยันการลบ", `ต้องการลบ${type} "${itemName}" ใช่หรือไม่?`, () => {
+        if(type === 'วัตถุดิบ') window.appData.materials.splice(idx, 1);
+        else window.appData.equipments.splice(idx, 1);
+        window.syncDataToCloud();
+        window.renderMaterialTags();
+        window.showToast('ลบรายการสำเร็จ');
+      });
     }
 
     window.resetAllData = function() {
