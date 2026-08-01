@@ -605,10 +605,15 @@
           if (window.unsubTransactions) { window.unsubTransactions(); window.unsubTransactions = null; }
           if (window.unsubSettings) { window.unsubSettings(); window.unsubSettings = null; }
           await signOut(auth);
+          // Clear everything to prevent cross-user data leak
           localStorage.removeItem('somtumAppData');
           localStorage.removeItem('somtumLastSyncedTimestamp');
           localStorage.removeItem('somtumHasUnsyncedData');
           localStorage.removeItem('somtumDataOwnerUid');
+          localStorage.removeItem('somtumAutoBackup');
+          localStorage.removeItem('somtumAutoBackupTime');
+          localStorage.removeItem('somtumAutoBackupUid');
+          localStorage.removeItem('somtumLastGoalNotified');
           window.appData = {
             transactions: [],
             categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
@@ -1258,7 +1263,7 @@
             return `
               <div class="flex justify-between items-center py-1.5 px-2.5 text-xs bg-white rounded-xl border border-gray-100 my-1 shadow-2xs">
                 <div class="flex flex-col">
-                  <span class="font-medium text-gray-800 text-[11px]">${it.date} ${it.time ? '• ' + it.time : ''}</span>
+                  <span class="font-medium text-gray-800 dark:text-gray-100 text-[11px]">${escapeHTML(it.date)} ${it.time ? '• ' + escapeHTML(it.time) : ''}</span>
                   ${it.note ? `<span class="text-[10px] text-gray-400 italic">${escapeHTML(it.note)}</span>` : ''}
                 </div>
                 <div class="flex items-center gap-2">
@@ -1266,8 +1271,8 @@
                     ${isInc ? '+' : '-'}฿${Number(it.amount).toLocaleString('th-TH', {minimumFractionDigits: 2})}
                   </span>
                   <div class="flex gap-1.5 ml-1">
-                    <button onclick="editTransaction('${it.id}')" class="text-gray-400 hover:text-brand-600 text-[11px] p-0.5" title="แก้ไข"><i class="fa-solid fa-pen"></i></button>
-                    <button onclick="deleteTransaction('${it.id}')" class="text-gray-400 hover:text-rose-600 text-[11px] p-0.5" title="ลบ"><i class="fa-solid fa-trash"></i></button>
+                    <button onclick="editTransaction('${escapeHTML(it.id)}')" class="text-gray-400 hover:text-brand-600 text-[11px] p-0.5" title="แก้ไข"><i class="fa-solid fa-pen"></i></button>
+                    <button onclick="deleteTransaction('${escapeHTML(it.id)}')" class="text-gray-400 hover:text-rose-600 text-[11px] p-0.5" title="ลบ"><i class="fa-solid fa-trash"></i></button>
                   </div>
                 </div>
               </div>`;
@@ -1901,6 +1906,8 @@
     }
 
     window.changeCalendarMonth = function(delta) {
+      // Prevent overflow when current day is 29/30/31
+      calendarCurrentDate.setDate(1);
       calendarCurrentDate.setMonth(calendarCurrentDate.getMonth() + delta);
       renderFullMonthCalendar();
     }
@@ -2197,8 +2204,7 @@
       }
     })();
 
-    // ----- Goal Notification -----
-    let lastGoalNotified = 0;
+    // ----- Goal Notification (persistent flag) -----
     window.checkGoalNotification = function() {
       const filteredTx = window.getFilteredTransactions();
       let totalIncome = 0, totalExpense = 0;
@@ -2210,16 +2216,20 @@
       if (window.appData.customGoal && window.appData.customGoal > 0) targetGoal = window.appData.customGoal;
       const pct = targetGoal > 0 ? (totalIncome / targetGoal) * 100 : 0;
       const now = Date.now();
-      if (pct >= 100 && now - lastGoalNotified > 60000) {
-        lastGoalNotified = now;
+      const lastNotified = parseInt(localStorage.getItem('somtumLastGoalNotified') || '0', 10);
+
+      if (pct >= 100 && now - lastNotified > 300000) { // 5 min cooldown
+        localStorage.setItem('somtumLastGoalNotified', String(now));
         window.showToast('🎉 ยินดีด้วย! บรรลุเป้าหมายแล้ว ' + pct.toFixed(0) + '%', 'success');
-        if (Notification.permission === 'granted') {
-          new Notification('ส้มตำนายหนึ่ง', { body: 'บรรลุเป้าหมายรายรับแล้ว! ' + pct.toFixed(0) + '%', icon: 'https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png' });
-        } else if (Notification.permission !== 'denied') {
-          Notification.requestPermission();
+        if (typeof Notification !== 'undefined') {
+          if (Notification.permission === 'granted') {
+            new Notification('ส้มตำนายหนึ่ง', { body: 'บรรลุเป้าหมายรายรับแล้ว! ' + pct.toFixed(0) + '%', icon: 'https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png' });
+          } else if (Notification.permission !== 'denied') {
+            Notification.requestPermission();
+          }
         }
-      } else if (pct >= 80 && pct < 100 && now - lastGoalNotified > 120000) {
-        lastGoalNotified = now;
+      } else if (pct >= 80 && pct < 100 && now - lastNotified > 600000) {
+        localStorage.setItem('somtumLastGoalNotified', String(now));
         window.showToast('ใกล้บรรลุเป้าหมายแล้ว! ' + pct.toFixed(0) + '%', 'success');
       }
     };
@@ -2233,15 +2243,19 @@
       };
     }
 
-    // ----- Auto Backup (every 15 minutes if data changed) -----
+    // ----- Auto Backup (stronger hash + scoped) -----
     let lastAutoBackupHash = '';
     window.performAutoBackup = function() {
       try {
         const dataStr = JSON.stringify(window.appData);
-        const hash = dataStr.length + '_' + (window.appData.transactions || []).length;
+        // Stronger hash: length + tx count + simple amount checksum
+        let amountSum = 0;
+        (window.appData.transactions || []).forEach(t => amountSum += Number(t.amount) || 0);
+        const hash = dataStr.length + '_' + (window.appData.transactions || []).length + '_' + amountSum.toFixed(2);
         if (hash !== lastAutoBackupHash) {
           localStorage.setItem('somtumAutoBackup', dataStr);
           localStorage.setItem('somtumAutoBackupTime', new Date().toISOString());
+          if (window.currentUser) localStorage.setItem('somtumAutoBackupUid', window.currentUser.uid);
           lastAutoBackupHash = hash;
         }
       } catch (e) { console.warn('Auto backup failed', e); }
