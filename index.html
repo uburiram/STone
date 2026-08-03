@@ -78,8 +78,8 @@
         <button id="btnToggleDark" onclick="toggleDarkMode()" class="text-xs bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-2.5 py-1.5 rounded-xl font-medium" title="สลับโหมดมืด/สว่าง">
           <i class="fa-solid fa-moon" id="darkModeIcon"></i>
         </button>
-        <button id="btnSyncNow" onclick="window.checkAndSyncCloudData(true)" class="hidden text-xs bg-amber-50 dark:bg-amber-900/30 hover:bg-amber-100 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 px-3 py-1.5 rounded-xl font-medium transition-all flex items-center gap-1.5">
-          <i class="fa-solid fa-rotate text-amber-600"></i> ซิงค์
+        <button id="btnSyncNow" onclick="window.checkAndSyncCloudData(true)" class="hidden text-xs bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-xl font-bold transition-all flex items-center gap-1.5 shadow-sm animate-pulse">
+          <i class="fa-solid fa-rotate"></i> ซิงค์ตอนนี้
         </button>
         <button id="btnLoginGoogle" onclick="window.loginGoogle()" class="text-xs bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-gray-600 px-3 py-1.5 rounded-xl font-semibold shadow-sm transition-all flex items-center gap-2">
           <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" class="w-4 h-4" alt="Google">
@@ -883,14 +883,30 @@
 
       if (isSynced) {
         statusElem.innerText = 'ข้อมูลซิงค์ตรงกันแล้ว (Cloud Connected)';
-        badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-emerald-500 border-2 border-white rounded-full';
+        badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-emerald-500 border-2 border-white dark:border-gray-800 rounded-full';
         btnSync.classList.add('hidden');
+        btnSync.classList.remove('animate-pulse');
         localStorage.setItem('somtumHasUnsyncedData', 'false');
       } else {
         statusElem.innerText = 'มีข้อมูลรอซิงค์ขึ้น Cloud...';
-        badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-amber-500 border-2 border-white rounded-full';
+        badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-amber-500 border-2 border-white dark:border-gray-800 rounded-full';
         btnSync.classList.remove('hidden');
+        btnSync.classList.add('animate-pulse');
         localStorage.setItem('somtumHasUnsyncedData', 'true');
+      }
+      if (typeof window.updatePendingSyncButton === 'function') window.updatePendingSyncButton();
+    };
+
+    window.updatePendingSyncButton = function() {
+      const btnSync = document.getElementById('btnSyncNow');
+      if (!btnSync) return;
+      const hasUnsynced = localStorage.getItem('somtumHasUnsyncedData') === 'true' || !!window._pendingSettingsSync;
+      if (window.currentUser && hasUnsynced) {
+        btnSync.classList.remove('hidden');
+        btnSync.classList.add('animate-pulse');
+      } else if (!hasUnsynced) {
+        btnSync.classList.add('hidden');
+        btnSync.classList.remove('animate-pulse');
       }
     };
 
@@ -948,12 +964,7 @@
       window.saveLocalOnly();
       if (!window.currentUser) {
         localStorage.setItem('somtumHasUnsyncedData', 'true');
-        return;
-      }
-      // Queue for later if offline (Firestore persistence may still queue writes)
-      if (!navigator.onLine) {
-        localStorage.setItem('somtumHasUnsyncedData', 'true');
-        window.updateSyncUI(false);
+        if (typeof window.updatePendingSyncButton === 'function') window.updatePendingSyncButton();
         return;
       }
       window.updateSyncUI(false);
@@ -972,14 +983,25 @@
             updatedAt: new Date().toISOString()
           }));
           const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
+          // Offline: Firestore persistentLocalCache queues this write automatically
           await setDoc(settingsRef, payload, { merge: true });
           window._pendingSettingsSync = false;
-          window.updateSyncUI(true);
+          if (navigator.onLine) {
+            window.updateSyncUI(true);
+          } else {
+            localStorage.setItem('somtumHasUnsyncedData', 'true');
+            window.updateSyncUI(false);
+          }
+          if (typeof window.updatePendingSyncButton === 'function') window.updatePendingSyncButton();
         } catch (e) {
           console.error("Settings sync error:", e);
           window._pendingSettingsSync = false;
+          localStorage.setItem('somtumHasUnsyncedData', 'true');
           window.updateSyncUI(false);
-          window.showToast('ซิงค์หมวดหมู่/ตั้งค่าล้มเหลว: ' + (e.message || 'unknown'), 'error');
+          if (typeof window.updatePendingSyncButton === 'function') window.updatePendingSyncButton();
+          if (navigator.onLine) {
+            window.showToast('ซิงค์หมวดหมู่/ตั้งค่าล้มเหลว: ' + (e.message || 'unknown'), 'error');
+          }
         }
       };
 
@@ -1043,9 +1065,19 @@
       }
     };
 
+    // Single unified saveLocalOnly: localStorage + offline flag + debounced auto-backup
     window.saveLocalOnly = function() {
       try {
         localStorage.setItem('somtumAppData', JSON.stringify(window.appData));
+        if (!navigator.onLine && window.currentUser) {
+          localStorage.setItem('somtumHasUnsyncedData', 'true');
+          if (typeof window.updatePendingSyncButton === 'function') window.updatePendingSyncButton();
+        }
+        // Debounced auto-backup
+        if (typeof window.performAutoBackup === 'function') {
+          clearTimeout(window._autoBakT);
+          window._autoBakT = setTimeout(window.performAutoBackup, 5000);
+        }
       } catch (e) {
         console.error("saveLocalOnly failed:", e);
         throw e; // surface QuotaExceededError etc.
@@ -2723,15 +2755,7 @@
       });
     };
     setInterval(window.performAutoBackup, 15 * 60 * 1000);
-    // Debounced backup after save
-    if (typeof window.saveLocalOnly === 'function') {
-      const originalSaveLocal = window.saveLocalOnly;
-      window.saveLocalOnly = function() {
-        originalSaveLocal();
-        clearTimeout(window._autoBakT);
-        window._autoBakT = setTimeout(window.performAutoBackup, 5000);
-      };
-    }
+    // Auto-backup debounce is handled inside unified saveLocalOnly (module script)
 
     // ----- PDF Export -----
     window.exportDataToPDF = function() {
@@ -2866,17 +2890,7 @@
     });
     // Initial paint
     window.updateNetworkStatusUI();
-
-    // Mark unsynced when writes happen while offline
-    if (typeof window.saveLocalOnly === 'function') {
-      const _origSaveLocalNet = window.saveLocalOnly;
-      window.saveLocalOnly = function() {
-        _origSaveLocalNet();
-        if (!navigator.onLine && window.currentUser) {
-          localStorage.setItem('somtumHasUnsyncedData', 'true');
-        }
-      };
-    }
+    if (typeof window.updatePendingSyncButton === 'function') window.updatePendingSyncButton();
 
     // ----- Register Service Worker -----
     if ('serviceWorker' in navigator) {
