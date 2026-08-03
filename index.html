@@ -808,13 +808,14 @@
           window.saveLocalOnly();
           window.refreshDashboard();
         } else {
-          setDoc(settingsRef, {
+          const bootPayload = JSON.parse(JSON.stringify({
             categories: window.appData.categories,
-            materials: window.appData.materials,
-            equipments: window.appData.equipments,
-            customGoal: window.appData.customGoal,
+            materials: window.appData.materials || [],
+            equipments: window.appData.equipments || [],
+            customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
             updatedAt: new Date().toISOString()
-          });
+          }));
+          setDoc(settingsRef, bootPayload);
         }
       });
 
@@ -856,24 +857,38 @@
       if (!window.currentUser) return;
       window.showToast('กำลังซิงค์ข้อมูล...');
       try {
+        window.appData = window.sanitizeAppData(window.appData);
         const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
-        await setDoc(settingsRef, {
+        const payload = JSON.parse(JSON.stringify({
           categories: window.appData.categories,
-          materials: window.appData.materials,
-          equipments: window.appData.equipments,
-          customGoal: window.appData.customGoal,
+          materials: window.appData.materials || [],
+          equipments: window.appData.equipments || [],
+          customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
           updatedAt: new Date().toISOString()
-        }, { merge: true });
+        }));
+        await setDoc(settingsRef, payload, { merge: true });
 
+        // Use batch for transactions
+        let batch = writeBatch(db);
+        let count = 0;
         for (const tx of (window.appData.transactions || [])) {
           const txRef = doc(db, "users", window.currentUser.uid, "transactions", tx.id);
-          await setDoc(txRef, tx, { merge: true });
+          batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
+          count++;
+          if (count >= 400) {
+            await batch.commit();
+            batch = writeBatch(db);
+            count = 0;
+          }
         }
+        if (count > 0) await batch.commit();
+
         window.updateSyncUI(true);
+        localStorage.removeItem('somtumHasUnsyncedData');
         window.showToast('ซิงค์ข้อมูลสำเร็จ');
       } catch (e) {
         console.error("Sync error:", e);
-        window.showToast('ซิงค์ข้อมูลล้มเหลว', 'error');
+        window.showToast('ซิงค์ข้อมูลล้มเหลว: ' + (e.message || 'unknown'), 'error');
       }
     };
 
@@ -900,21 +915,24 @@
 
       const doSync = async () => {
         try {
-          const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
-          await setDoc(settingsRef, {
+          // Strip undefined (Firestore rejects undefined field values)
+          window.appData = window.sanitizeAppData(window.appData);
+          const payload = JSON.parse(JSON.stringify({
             categories: window.appData.categories,
-            materials: window.appData.materials,
-            equipments: window.appData.equipments,
-            customGoal: window.appData.customGoal,
+            materials: window.appData.materials || [],
+            equipments: window.appData.equipments || [],
+            customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
             updatedAt: new Date().toISOString()
-          }, { merge: true });
+          }));
+          const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
+          await setDoc(settingsRef, payload, { merge: true });
           window._pendingSettingsSync = false;
           window.updateSyncUI(true);
         } catch (e) {
           console.error("Settings sync error:", e);
           window._pendingSettingsSync = false;
           window.updateSyncUI(false);
-          window.showToast('ซิงค์หมวดหมู่/ตั้งค่าล้มเหลว กรุณากดปุ่มซิงค์', 'error');
+          window.showToast('ซิงค์หมวดหมู่/ตั้งค่าล้มเหลว: ' + (e.message || 'unknown'), 'error');
         }
       };
 
@@ -1026,11 +1044,20 @@
         data.categories.expense = JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES.expense));
       }
       ['income', 'expense'].forEach(type => {
-        data.categories[type] = data.categories[type].filter(c => c && typeof c.name === 'string').map(c => ({
-          name: String(c.name),
-          subs: Array.isArray(c.subs) ? c.subs.filter(s => typeof s === 'string') : [],
-          flags: c.flags && typeof c.flags === 'object' ? c.flags : undefined
-        }));
+        data.categories[type] = data.categories[type].filter(c => c && typeof c.name === 'string').map(c => {
+          const cleaned = {
+            name: String(c.name).slice(0, 100),
+            subs: Array.isArray(c.subs) ? c.subs.filter(s => typeof s === 'string').map(s => String(s).slice(0, 200)) : []
+          };
+          // Firestore rejects undefined — only include flags when present
+          if (c.flags && typeof c.flags === 'object') {
+            cleaned.flags = {};
+            if (c.flags.isMaterialCategory) cleaned.flags.isMaterialCategory = true;
+            if (c.flags.isEquipmentCategory) cleaned.flags.isEquipmentCategory = true;
+            if (Object.keys(cleaned.flags).length === 0) delete cleaned.flags;
+          }
+          return cleaned;
+        });
         if (data.categories[type].length === 0) {
           data.categories[type] = JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES[type]));
         }
