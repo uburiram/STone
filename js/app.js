@@ -1459,18 +1459,21 @@
       }
     }
 
-    window.openCalendarDayModal = function(dStr) {
+    window.openCalendarDayModal = async function(dStr) {
       selectedCalendarDay = dStr;
-      const txs = (window.appData.transactions || []).filter(t => t.date === dStr);
-      let inc = 0, exp = 0;
-      txs.forEach(t => {
-        if(t.type === 'income') inc += Number(t.amount);
-        else exp += Number(t.amount);
-      });
+      let txs = (window.appData.transactions || []).filter(t => t.date === dStr);
+      try {
+        if (window.SomtumStore && SomtumStore.getTxByDateRange) {
+          const fromIdb = await SomtumStore.getTxByDateRange(dStr, dStr);
+          if (fromIdb && fromIdb.length) txs = fromIdb;
+        }
+      } catch (e) { console.warn('cal day IDB', e); }
+      const sums = window.sumIncomeExpense(txs);
+      const inc = sums.income, exp = sums.expense, net = sums.net;
 
       document.getElementById('calDayInc').innerText = '฿' + inc.toLocaleString('th-TH', {minimumFractionDigits: 2});
       document.getElementById('calDayExp').innerText = '฿' + exp.toLocaleString('th-TH', {minimumFractionDigits: 2});
-      document.getElementById('calDayNet').innerText = '฿' + (inc - exp).toLocaleString('th-TH', {minimumFractionDigits: 2});
+      document.getElementById('calDayNet').innerText = '฿' + net.toLocaleString('th-TH', {minimumFractionDigits: 2});
       document.getElementById('calModalTitle').innerHTML = `<i class="fa-solid fa-calendar-day"></i> รายการวันที่ ${dStr}`;
       
       window.renderDrillDownAccordion(txs, 'calDayTxList', 'calDayModal');
