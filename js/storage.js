@@ -240,19 +240,22 @@
     candidates.sort((a, b) => b.score - a.score);
     const best = candidates[0];
 
-    if (existingCount > 0 && migrated) {
-      console.info('[SomtumStore] v2 ready, tx count=', existingCount);
-      return;
-    }
-
+    // Always prefer richer legacy blob (idempotent put by id) — recovers empty/partial v2
     if (best && best.score >= 0) {
       try {
         const parsed = JSON.parse(best.raw);
-        const result = await importLegacyObject(parsed);
-        console.info('[SomtumStore] migrated from', best.src, 'tx=', result.tx, 'existingBefore=', existingCount);
+        const bestN = Array.isArray(parsed.transactions) ? parsed.transactions.length : 0;
+        if (!migrated || existingCount === 0 || bestN > existingCount) {
+          const result = await importLegacyObject(parsed);
+          console.info('[SomtumStore] migrated/merged from', best.src, 'tx=', result.tx, 'idbBefore=', existingCount, 'legacyN=', bestN);
+        } else {
+          console.info('[SomtumStore] v2 ready, tx count=', existingCount, '(legacy not richer)');
+        }
       } catch (e) {
         console.error('[SomtumStore] migrate parse/import failed', e);
       }
+    } else if (existingCount > 0) {
+      console.info('[SomtumStore] v2 ready, tx count=', existingCount);
     }
 
     try {

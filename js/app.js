@@ -224,7 +224,33 @@
             window.appData = window.sanitizeAppData(window.appData);
           }
         }
-        await window.ensureTransactionsLoaded(true);
+        // Prefer full history on first paint so no month looks "missing"
+        let n = SomtumStore.countTx ? await SomtumStore.countTx() : 0;
+        if (n > 0 && SomtumStore.getAllTx) {
+          const all = await SomtumStore.getAllTx();
+          window.appData.transactions = all || [];
+          window.__txCacheLoaded = true;
+          window.__loadedRange = { start: null, end: null };
+        } else {
+          await window.ensureTransactionsLoaded(true);
+        }
+        // Recovery: if IDB empty but legacy blob exists, force structured import
+        n = SomtumStore.countTx ? await SomtumStore.countTx() : 0;
+        if (n === 0) {
+          const raw = SomtumStore.getItem('somtumAppData');
+          if (raw) {
+            try {
+              const parsed = window.sanitizeAppData(JSON.parse(raw));
+              if ((parsed.transactions || []).length > 0 && SomtumStore.persistAppState) {
+                await SomtumStore.persistAppState(parsed, { writeAllTx: true });
+                window.appData = parsed;
+                window.__txCacheLoaded = true;
+                window.__loadedRange = { start: null, end: null };
+                console.info('[hydrate] recovered', parsed.transactions.length, 'txs from legacy blob');
+              }
+            } catch (e2) { console.warn(e2); }
+          }
+        }
       } catch (e) {
         console.error('async hydrate failed', e);
         window.__hydrateAppDataFromStore(true);
@@ -1225,9 +1251,29 @@
           window.showConfirmModal("ยืนยันการนำเข้าข้อมูล", "ข้อมูลใหม่จะถูกนำมาแทนที่ข้อมูลปัจจุบัน คุณต้องการดำเนินการต่อหรือไม่?", async () => {
             window.showToast("กำลังนำเข้าข้อมูล...");
             const newData = window.sanitizeAppData(parsed);
-            // Update local first
             window.appData = newData;
-            try { window.saveLocalOnly(); } catch (e) {
+            try {
+              // CRITICAL: write ALL transactions into IDB (not just memory / meta)
+              if (window.SomtumStore && SomtumStore.persistAppState) {
+                await SomtumStore.persistAppState(newData, { writeAllTx: true });
+                if (SomtumStore.markDirty) {
+                  for (const tx of (newData.transactions || [])) {
+                    if (tx && tx.id) await SomtumStore.markDirty(tx.id);
+                  }
+                }
+                if (SomtumStore.markMetaDirty) SomtumStore.markMetaDirty();
+              }
+              // Also keep a legacy blob only if small enough (handled inside setItem)
+              try {
+                SomtumStore.setItem('somtumAppData', JSON.stringify(newData));
+              } catch (e2) { /* quota ok — IDB is source of truth */ }
+              window.__txCacheLoaded = false;
+              if (typeof window.ensureTransactionsLoaded === 'function') {
+                await window.ensureTransactionsLoaded(true);
+              }
+              window.saveLocalOnly();
+            } catch (e) {
+              console.error(e);
               window.showToast('บันทึกลงเครื่องล้มเหลว', 'error');
               return;
             }
@@ -1326,10 +1372,15 @@
       window.renderDrillDownAccordion(limitedReport, 'categoryReportList', 'catReportTab');
     }
 
-    window.changeCalendarMonth = function(delta) {
+    window.changeCalendarMonth = async function(delta) {
       // Prevent overflow when current day is 29/30/31
       calendarCurrentDate.setDate(1);
       calendarCurrentDate.setMonth(calendarCurrentDate.getMonth() + delta);
+      try {
+        if (typeof window.ensureTransactionsLoaded === 'function') {
+          await window.ensureTransactionsLoaded(true);
+        }
+      } catch (e) { console.warn(e); }
       renderFullMonthCalendar();
     }
 
@@ -1881,14 +1932,22 @@
         // Guest trying to restore a logged-in user's backup
         if (!confirm('Auto Backup นี้สร้างจากบัญชีที่ล็อกอินอยู่ ต้องการกู้คืนเป็นข้อมูล Guest ใช่หรือไม่?')) return;
       }
-      window.showConfirmModal('กู้คืนจาก Auto Backup', 'ข้อมูลปัจจุบันจะถูกแทนที่ด้วยสำรองเมื่อ ' + (t ? new Date(t).toLocaleString('th-TH') : 'ไม่ทราบเวลา') + ' ต้องการดำเนินการต่อหรือไม่?', () => {
+      window.showConfirmModal('กู้คืนจาก Auto Backup', 'ข้อมูลปัจจุบันจะถูกแทนที่ด้วยสำรองเมื่อ ' + (t ? new Date(t).toLocaleString('th-TH') : 'ไม่ทราบเวลา') + ' ต้องการดำเนินการต่อหรือไม่?', async () => {
         try {
           window.appData = window.sanitizeAppData(JSON.parse(bak));
+          if (window.SomtumStore && SomtumStore.persistAppState) {
+            await SomtumStore.persistAppState(window.appData, { writeAllTx: true });
+            window.__txCacheLoaded = false;
+          }
           window.saveLocalOnly();
           window.syncDataToCloud();
+          if (typeof window.ensureTransactionsLoaded === 'function') {
+            await window.ensureTransactionsLoaded(true);
+          }
           window.refreshDashboard();
           window.showToast('กู้คืนจาก Auto Backup สำเร็จ');
         } catch (e) {
+          console.error(e);
           alert('กู้คืนล้มเหลว');
         }
       });

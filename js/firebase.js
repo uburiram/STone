@@ -75,24 +75,42 @@ const firebaseConfig = {
     window.loginGoogle = async function() {
       try {
         await setPersistence(auth, browserLocalPersistence);
-        const isWebView = /(iPhone|iPod|iPad).*AppleWebKit(?!.*Safari)/i.test(navigator.userAgent) || /Android.*Version\/[0-9].[0-9]/.test(navigator.userAgent) || /wv/.test(navigator.userAgent);
-        if (isWebView) {
+        const ua = navigator.userAgent || '';
+        // Mobile browsers / in-app WebViews often break popup → use redirect
+        const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+        const isWebView = /(iPhone|iPod|iPad).*AppleWebKit(?!.*Safari)/i.test(ua) ||
+          /; wv\)/i.test(ua) || /FBAN|FBAV|Line\//i.test(ua);
+        if (isMobile || isWebView) {
           await signInWithRedirect(auth, googleProvider);
-        } else {
-          try {
-            const result = await signInWithPopup(auth, googleProvider);
-            window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + result.user.displayName);
-          } catch (popupError) {
-            if (popupError.code === 'auth/popup-blocked') {
+          return;
+        }
+        try {
+          const result = await signInWithPopup(auth, googleProvider);
+          window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + result.user.displayName);
+        } catch (popupError) {
+          const code = popupError && popupError.code;
+          // popup-blocked, internal-error, cancelled → fall back to redirect
+          if (code === 'auth/popup-blocked' ||
+              code === 'auth/internal-error' ||
+              code === 'auth/cancelled-popup-request' ||
+              code === 'auth/popup-closed-by-user') {
+            if (code !== 'auth/popup-closed-by-user') {
+              window.showToast('กำลังเปิดหน้าเข้าสู่ระบบ...', 'success');
               await signInWithRedirect(auth, googleProvider);
-            } else if (popupError.code !== 'auth/popup-closed-by-user') {
-              throw popupError;
             }
+            return;
           }
+          throw popupError;
         }
       } catch (error) {
         console.error("Login failed:", error);
-        alert('เกิดข้อผิดพลาดในการลงชื่อเข้าใช้: ' + error.message);
+        // Last resort: redirect (fixes many auth/internal-error cases on mobile)
+        try {
+          window.showToast('กำลังเปลี่ยนวิธีเข้าสู่ระบบ...', 'success');
+          await signInWithRedirect(auth, googleProvider);
+        } catch (e2) {
+          alert('เกิดข้อผิดพลาดในการลงชื่อเข้าใช้: ' + (error.message || error));
+        }
       }
     };
 
