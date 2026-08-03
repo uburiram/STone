@@ -999,9 +999,13 @@
       }
     }
 
-    window.editTransaction = function(id) {
-      const tx = window.appData.transactions.find(t=>t.id===id);
-      if(tx) openTransactionModal(tx.type, id);
+    window.editTransaction = async function(id) {
+      let tx = (window.appData.transactions || []).find(t => t.id === id);
+      if (!tx && window.SomtumStore && SomtumStore.getTx) {
+        try { tx = await SomtumStore.getTx(id); } catch (e) { console.warn(e); }
+      }
+      if (tx) openTransactionModal(tx.type, id);
+      else window.showToast('ไม่พบรายการ', 'error');
     }
 
     window.deleteTransaction = function(id) {

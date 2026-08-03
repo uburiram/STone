@@ -172,16 +172,19 @@ const firebaseConfig = {
           if (window.unsubTransactions) { window.unsubTransactions(); window.unsubTransactions = null; }
           if (window.unsubSettings) { window.unsubSettings(); window.unsubSettings = null; }
           await signOut(auth);
-          // Clear everything to prevent cross-user data leak
-          SomtumStore.removeItem('somtumAppData');
-          SomtumStore.removeItem('somtumLastSyncedTimestamp');
-          SomtumStore.removeItem('somtumHasUnsyncedData');
-          SomtumStore.removeItem('somtumDataOwnerUid');
-          SomtumStore.removeItem('somtumAutoBackup');
-          SomtumStore.removeItem('somtumAutoBackupTime');
-          SomtumStore.removeItem('somtumAutoBackupUid');
-          SomtumStore.removeItem('somtumLastGoalNotified');
-          // Reset in-memory backup hash so next session starts clean
+          // Clear IDB structured stores + LS flags (privacy: no leftover txs)
+          if (SomtumStore.clearAllUserData) {
+            await SomtumStore.clearAllUserData();
+          } else {
+            SomtumStore.removeItem('somtumAppData');
+            SomtumStore.removeItem('somtumLastSyncedTimestamp');
+            SomtumStore.removeItem('somtumHasUnsyncedData');
+            SomtumStore.removeItem('somtumDataOwnerUid');
+            SomtumStore.removeItem('somtumAutoBackup');
+            SomtumStore.removeItem('somtumAutoBackupTime');
+            SomtumStore.removeItem('somtumAutoBackupUid');
+            SomtumStore.removeItem('somtumLastGoalNotified');
+          }
           if (typeof lastAutoBackupHash !== 'undefined') lastAutoBackupHash = '';
           window.appData = {
             transactions: [],
@@ -190,6 +193,8 @@ const firebaseConfig = {
             equipments: [...window.DEFAULT_EQUIPMENTS],
             customGoal: null
           };
+          window.__txCacheLoaded = false;
+          window.__loadedRange = { start: null, end: null };
           window.refreshDashboard();
           window.showToast('ออกจากระบบแล้ว');
         } catch (error) {
@@ -218,20 +223,36 @@ const firebaseConfig = {
         // Safety: classic script may not have finished early-load yet if module
         // ran first. Re-hydrate from localStorage before guest-merge decision.
         try {
+          // Prefer full IDB history for guest-merge decision (not just current filter range)
+          if (SomtumStore.getAllTx) {
+            const all = await SomtumStore.getAllTx();
+            if (all && all.length) {
+              window.appData.transactions = all;
+            }
+          }
+          if (SomtumStore.getMeta) {
+            const meta = await SomtumStore.getMeta();
+            if (meta) {
+              if (meta.categories) window.appData.categories = meta.categories;
+              if (meta.materials) window.appData.materials = meta.materials;
+              if (meta.equipments) window.appData.equipments = meta.equipments;
+              if (meta.customGoal !== undefined) window.appData.customGoal = meta.customGoal;
+            }
+          }
           const raw = SomtumStore.getItem('somtumAppData');
           if (raw && typeof window.sanitizeAppData === 'function') {
             const parsed = window.sanitizeAppData(JSON.parse(raw));
             const memLen = (window.appData && window.appData.transactions) ? window.appData.transactions.length : 0;
             const diskLen = (parsed.transactions || []).length;
-            // Prefer the larger / more complete dataset to avoid wiping local work
             if (diskLen > memLen) {
               window.appData = parsed;
             } else if (!window.appData || !Array.isArray(window.appData.transactions)) {
               window.appData = parsed;
             }
           }
+          window.appData = window.sanitizeAppData(window.appData || {});
         } catch (e) {
-          console.warn('Auth hydrate from localStorage failed:', e);
+          console.warn('Auth hydrate failed:', e);
         }
 
         const lastOwnerUid = SomtumStore.getItem('somtumDataOwnerUid');
@@ -726,6 +747,7 @@ const firebaseConfig = {
         // With persistentLocalCache, setDoc queues while offline and syncs later
         const txRef = doc(db, "users", window.currentUser.uid, "transactions", txObj.id);
         await setDoc(txRef, JSON.parse(JSON.stringify(txObj)));
+        if (SomtumStore.clearDirty) await SomtumStore.clearDirty([txObj.id]);
         if (navigator.onLine) {
           window.updateSyncUI(true);
         } else {
@@ -736,7 +758,7 @@ const firebaseConfig = {
         console.error("Save tx error:", e);
         SomtumStore.setItem('somtumHasUnsyncedData', 'true');
         window.updateSyncUI(false);
-        throw e; // let caller show error toast
+        throw e;
       }
     };
 
@@ -752,6 +774,7 @@ const firebaseConfig = {
       try {
         const txRef = doc(db, "users", window.currentUser.uid, "transactions", txId);
         await deleteDoc(txRef);
+        if (SomtumStore.clearDeleted) await SomtumStore.clearDeleted([txId]);
         if (navigator.onLine) {
           window.updateSyncUI(true);
         } else {

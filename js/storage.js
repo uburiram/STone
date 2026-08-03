@@ -275,6 +275,14 @@
     memoryKv[FLAG_MIGRATED] = await kvGet(FLAG_MIGRATED);
     txCountCache = await countTx();
     console.info('[SomtumStore] migration complete. tx=', txCountCache);
+    // seed dirty for first cloud upload after structural migrate
+    try {
+      const seeded = await kvGet('__seed_dirty_v2');
+      if (!seeded && txCountCache > 0) {
+        // deferred: SomtumStore.seedDirtyIfNeeded called from init after object ready
+        memoryKv['__need_seed_dirty'] = '1';
+      }
+    } catch (e) { /* */ }
   }
 
   async function getDirtyIds() {
@@ -319,6 +327,32 @@
           const v = safeLSGet(k);
           if (v != null) memoryKv[k] = v;
         });
+        if (memoryKv['__need_seed_dirty'] === '1' || !(await kvGet('__seed_dirty_v2'))) {
+          // call after methods exist — use internal helpers
+          try {
+            const seeded = await kvGet('__seed_dirty_v2');
+            if (!seeded) {
+              const n = await countTx();
+              if (n > 0) {
+                const allList = await new Promise((resolve, reject) => {
+                  const tx = db.transaction(STORE_TX, 'readonly');
+                  const req = tx.objectStore(STORE_TX).getAll();
+                  req.onsuccess = () => resolve(req.result || []);
+                  req.onerror = () => reject(req.error);
+                });
+                await setDirtyIds(allList.filter((x) => x && x.id).map((x) => String(x.id)));
+                memoryKv[FLAG_META_DIRTY] = '1';
+                await kvSet(FLAG_META_DIRTY, '1');
+                console.info('[SomtumStore] seeded dirty on init', n);
+              }
+              await kvSet('__seed_dirty_v2', '1');
+              memoryKv['__seed_dirty_v2'] = '1';
+            }
+          } catch (seedErr) {
+            console.warn('seed on init', seedErr);
+          }
+          delete memoryKv['__need_seed_dirty'];
+        }
         ready = true;
         global.dispatchEvent(new CustomEvent('somtum-store-ready'));
         return true;
@@ -530,6 +564,66 @@
     },
 
     async flush() { await writeQueue; },
+
+    /**
+     * Wipe all app data from IDB + critical LS keys (logout / reset).
+     * Keeps UI prefs like dark mode.
+     */
+    async clearAllUserData() {
+      txCountCache = null;
+      // Clear tx store
+      if (db) {
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_TX, 'readwrite');
+          tx.objectStore(STORE_TX).clear();
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_META, 'readwrite');
+          tx.objectStore(STORE_META).clear();
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      }
+      const wipeKeys = [
+        'somtumAppData', 'somtumHasUnsyncedData', 'somtumLastSyncedTimestamp',
+        'somtumDataOwnerUid', 'somtumAutoBackup', 'somtumAutoBackupTime',
+        'somtumAutoBackupUid', 'somtumLastGoalNotified', 'somtumLastBackupRemind',
+        FLAG_DIRTY, FLAG_DELETED, FLAG_META_DIRTY, '__seed_dirty_v2'
+      ];
+      for (const k of wipeKeys) {
+        delete memoryKv[k];
+        safeLSRemove(k);
+        if (db) {
+          try { await kvDel(k); } catch (e) { /* */ }
+        }
+      }
+      // Keep FLAG_MIGRATED so empty IDB is not re-filled from deleted LS
+      await kvSet(FLAG_MIGRATED, new Date().toISOString());
+      memoryKv[FLAG_MIGRATED] = await kvGet(FLAG_MIGRATED);
+    },
+
+    /** One-time: mark every local tx dirty so first soft-sync uploads after v2 migrate */
+    async seedDirtyIfNeeded() {
+      try {
+        const seeded = memoryKv['__seed_dirty_v2'] || (await kvGet('__seed_dirty_v2'));
+        if (seeded) return;
+        const n = await countTx();
+        if (n > 0) {
+          const all = await this.getAllTx();
+          const ids = all.filter((t) => t && t.id).map((t) => String(t.id));
+          await setDirtyIds(ids);
+          memoryKv[FLAG_META_DIRTY] = '1';
+          await kvSet(FLAG_META_DIRTY, '1');
+          console.info('[SomtumStore] seeded dirty ids', ids.length);
+        }
+        memoryKv['__seed_dirty_v2'] = '1';
+        await kvSet('__seed_dirty_v2', '1');
+      } catch (e) {
+        console.warn('seedDirtyIfNeeded', e);
+      }
+    },
 
     async stats() {
       const n = await this.countTx();
