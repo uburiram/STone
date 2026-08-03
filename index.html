@@ -68,9 +68,13 @@
         <div>
           <div id="userName" class="text-xs font-bold text-gray-800 dark:text-gray-100">ผู้ใช้งานทั่วไป (ยังไม่ได้ล็อกอิน)</div>
           <div id="userSyncText" class="text-[10px] text-gray-500 dark:text-gray-400">บันทึกข้อมูลเฉพาะในเครื่องนี้</div>
+          <div id="networkStatusText" class="text-[10px] mt-0.5 font-medium text-emerald-600"><i class="fa-solid fa-wifi mr-1"></i>ออนไลน์</div>
         </div>
       </div>
       <div class="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap">
+        <span id="networkStatusBadge" class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700" title="สถานะเครือข่าย">
+          <i class="fa-solid fa-wifi"></i> ออนไลน์
+        </span>
         <button id="btnToggleDark" onclick="toggleDarkMode()" class="text-xs bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-2.5 py-1.5 rounded-xl font-medium" title="สลับโหมดมืด/สว่าง">
           <i class="fa-solid fa-moon" id="darkModeIcon"></i>
         </button>
@@ -333,6 +337,26 @@
     </div>
   </div>
 
+  <!-- Rename Modal -->
+  <div id="renameModal" class="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center hidden p-4">
+    <div class="bg-white dark:bg-gray-800 w-full max-w-sm rounded-3xl p-5 shadow-2xl space-y-4">
+      <div class="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 text-blue-600 rounded-full flex items-center justify-center mx-auto text-xl">
+        <i class="fa-solid fa-pen"></i>
+      </div>
+      <div class="text-center">
+        <h3 id="renameModalTitle" class="font-bold text-base text-gray-800 dark:text-gray-100">แก้ไขชื่อ</h3>
+        <p id="renameModalDesc" class="text-xs text-gray-500 dark:text-gray-400 mt-1">กรอกชื่อใหม่ด้านล่าง</p>
+      </div>
+      <div>
+        <input type="text" id="renameModalInput" class="w-full text-sm border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-2.5 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="ชื่อใหม่...">
+      </div>
+      <div class="flex gap-2 pt-1">
+        <button type="button" onclick="window.closeRenameModal()" class="flex-1 py-2.5 rounded-xl border border-gray-300 dark:border-gray-600 text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">ยกเลิก</button>
+        <button type="button" id="renameModalBtnOk" class="flex-1 py-2.5 rounded-xl bg-brand-600 text-white text-xs font-semibold hover:bg-brand-700 shadow-md">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Sync Prompt Modal -->
   <div id="syncPromptModal" class="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center hidden p-4">
     <div class="bg-white dark:bg-gray-800 w-full max-w-sm rounded-3xl p-5 shadow-2xl space-y-4 text-center">
@@ -531,7 +555,10 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
     import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-    import { getFirestore, collection, doc, getDoc, setDoc, deleteDoc, getDocs, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+    import {
+      initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+      collection, doc, getDoc, setDoc, deleteDoc, getDocs, onSnapshot, writeBatch
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyAPWL6-lCNacvrVT3ap1YUAe6emoL74Rj8",
@@ -545,8 +572,22 @@
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
-    const db = getFirestore(app);
+    // Firestore offline persistence (IndexedDB)
+    let db;
+    try {
+      db = initializeFirestore(app, {
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager()
+        })
+      });
+    } catch (e) {
+      // Fallback if already initialized or unsupported
+      console.warn('persistentLocalCache unavailable, fallback getFirestore-compatible init', e);
+      const { getFirestore } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+      db = getFirestore(app);
+    }
     window.db = db;
+    window._firestoreOfflineEnabled = true;
     // Expose Firestore helpers for non-module scripts
     window.collection = collection;
     window.doc = doc;
@@ -909,6 +950,12 @@
         localStorage.setItem('somtumHasUnsyncedData', 'true');
         return;
       }
+      // Queue for later if offline (Firestore persistence may still queue writes)
+      if (!navigator.onLine) {
+        localStorage.setItem('somtumHasUnsyncedData', 'true');
+        window.updateSyncUI(false);
+        return;
+      }
       window.updateSyncUI(false);
       window._pendingSettingsSync = true;
       if (syncTimer) clearTimeout(syncTimer);
@@ -949,12 +996,22 @@
         return;
       }
       window.updateSyncUI(false);
+      if (!navigator.onLine) {
+        localStorage.setItem('somtumHasUnsyncedData', 'true');
+      }
       try {
+        // With persistentLocalCache, setDoc queues while offline and syncs later
         const txRef = doc(db, "users", window.currentUser.uid, "transactions", txObj.id);
-        await setDoc(txRef, txObj);
-        window.updateSyncUI(true);
+        await setDoc(txRef, JSON.parse(JSON.stringify(txObj)));
+        if (navigator.onLine) {
+          window.updateSyncUI(true);
+        } else {
+          localStorage.setItem('somtumHasUnsyncedData', 'true');
+          window.updateSyncUI(false);
+        }
       } catch (e) {
         console.error("Save tx error:", e);
+        localStorage.setItem('somtumHasUnsyncedData', 'true');
         window.updateSyncUI(false);
         throw e; // let caller show error toast
       }
@@ -966,12 +1023,21 @@
         return;
       }
       window.updateSyncUI(false);
+      if (!navigator.onLine) {
+        localStorage.setItem('somtumHasUnsyncedData', 'true');
+      }
       try {
         const txRef = doc(db, "users", window.currentUser.uid, "transactions", txId);
         await deleteDoc(txRef);
-        window.updateSyncUI(true);
+        if (navigator.onLine) {
+          window.updateSyncUI(true);
+        } else {
+          localStorage.setItem('somtumHasUnsyncedData', 'true');
+          window.updateSyncUI(false);
+        }
       } catch (e) {
         console.error("Delete tx error:", e);
+        localStorage.setItem('somtumHasUnsyncedData', 'true');
         window.updateSyncUI(false);
         throw e;
       }
@@ -1155,6 +1221,48 @@
         modal.classList.add('hidden');
       };
       modal.classList.remove('hidden');
+    };
+
+    window.closeRenameModal = function() {
+      document.getElementById('renameModal').classList.add('hidden');
+      window._renameCallback = null;
+    };
+
+    window.openRenameModal = function(title, desc, currentValue, onSave) {
+      const modal = document.getElementById('renameModal');
+      document.getElementById('renameModalTitle').innerText = title;
+      document.getElementById('renameModalDesc').innerText = desc || 'กรอกชื่อใหม่ด้านล่าง';
+      const input = document.getElementById('renameModalInput');
+      input.value = currentValue || '';
+      window._renameCallback = onSave;
+
+      const btnOk = document.getElementById('renameModalBtnOk');
+      const newBtnOk = btnOk.cloneNode(true);
+      btnOk.parentNode.replaceChild(newBtnOk, btnOk);
+      newBtnOk.onclick = () => {
+        const val = input.value.trim();
+        if (!val) {
+          alert('ชื่อห้ามว่าง');
+          input.focus();
+          return;
+        }
+        modal.classList.add('hidden');
+        if (window._renameCallback) window._renameCallback(val);
+        window._renameCallback = null;
+      };
+
+      // Enter key submits
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          newBtnOk.click();
+        } else if (e.key === 'Escape') {
+          window.closeRenameModal();
+        }
+      };
+
+      modal.classList.remove('hidden');
+      setTimeout(() => { input.focus(); input.select(); }, 50);
     };
 
     function createDynamicManifest() {
@@ -2143,7 +2251,7 @@
       (window.appData.categories[managerType] || []).forEach((cat, i) => {
         let subs = '';
         if(cat.subs && cat.subs.length > 0) {
-          subs = cat.subs.map((s, j) => `<span class="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded text-[10px] inline-flex items-center gap-1 mb-1">${escapeHTML(s)} <button onclick="deleteSubCategory(${i}, ${j})" class="text-gray-400 hover:text-rose-500"><i class="fa-solid fa-xmark"></i></button></span>`).join(' ');
+          subs = cat.subs.map((s, j) => `<span class="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded text-[10px] inline-flex items-center gap-1 mb-1">${escapeHTML(s)} <button onclick="renameSubCategory(${i}, ${j})" class="text-blue-500 hover:text-blue-700" title="แก้ไข"><i class="fa-solid fa-pen text-[9px]"></i></button> <button onclick="deleteSubCategory(${i}, ${j})" class="text-gray-400 hover:text-rose-500" title="ลบ"><i class="fa-solid fa-xmark"></i></button></span>`).join(' ');
         }
         let badge = '';
         if(cat.flags?.isMaterialCategory) badge = `<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-medium">วัตถุดิบ</span>`;
@@ -2153,7 +2261,10 @@
           <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3">
             <div class="flex justify-between items-center mb-2">
               <span class="font-bold text-xs text-gray-800 dark:text-gray-100 flex items-center gap-1.5"><i class="fa-solid fa-folder text-brand-500"></i> ${escapeHTML(cat.name)} ${badge}</span>
-              <button onclick="deleteMainCategory(${i})" class="text-gray-400 hover:text-rose-500 text-xs"><i class="fa-solid fa-trash"></i></button>
+              <div class="flex items-center gap-2">
+                <button onclick="renameMainCategory(${i})" class="text-blue-500 hover:text-blue-700 text-xs" title="แก้ไขชื่อหมวดหมู่"><i class="fa-solid fa-pen"></i></button>
+                <button onclick="deleteMainCategory(${i})" class="text-gray-400 hover:text-rose-500 text-xs" title="ลบหมวดหมู่"><i class="fa-solid fa-trash"></i></button>
+              </div>
             </div>
             <div class="flex flex-wrap gap-1 mb-2">${subs || (cat.flags?.isMaterialCategory || cat.flags?.isEquipmentCategory ? '<span class="text-[10px] text-gray-400 italic">เลือกจากลิสต์วัตถุดิบ/อุปกรณ์อัตโนมัติ</span>' : '<span class="text-[10px] text-gray-400 italic">ไม่มีรายการย่อย</span>')}</div>
             <div class="flex gap-1.5">
@@ -2163,6 +2274,109 @@
           </div>`;
       });
     }
+
+    // Rename main category + update all related transactions (via modal)
+    window.renameMainCategory = function(i) {
+      const cats = window.appData.categories[managerType];
+      const cat = cats[i];
+      if (!cat) return;
+      const oldName = cat.name;
+      window.openRenameModal('แก้ไขหมวดหมู่หลัก', 'ชื่อใหม่จะถูกอัปเดตในรายการที่บันทึกไว้แล้วด้วย', oldName, async (trimmed) => {
+        if (trimmed === oldName) return;
+        if (cats.some((c, idx) => idx !== i && c.name.toLowerCase() === trimmed.toLowerCase())) {
+          alert('มีหมวดหมู่นี้อยู่แล้ว');
+          return;
+        }
+        cat.name = trimmed;
+        let updatedCount = 0;
+        (window.appData.transactions || []).forEach(tx => {
+          if (tx.type === managerType && tx.category === oldName) {
+            tx.category = trimmed;
+            updatedCount++;
+          }
+        });
+        window.syncDataToCloud(true);
+        if (window.currentUser && updatedCount > 0) {
+          try {
+            let batch = window.writeBatch(window.db);
+            let count = 0;
+            for (const tx of window.appData.transactions) {
+              if (tx.type === managerType && tx.category === trimmed) {
+                const txRef = window.doc(window.db, "users", window.currentUser.uid, "transactions", tx.id);
+                batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
+                count++;
+                if (count >= 400) { await batch.commit(); batch = window.writeBatch(window.db); count = 0; }
+              }
+            }
+            if (count > 0) await batch.commit();
+          } catch (e) {
+            console.error('Rename category tx sync error:', e);
+            window.showToast('อัปเดตชื่อหมวดหมู่แล้ว แต่ซิงค์รายการบางส่วนล้มเหลว', 'error');
+          }
+        }
+        window.renderCategoryTree();
+        window.refreshDashboard();
+        window.showToast(updatedCount > 0
+          ? `แก้ไขหมวดหมู่เรียบร้อย (อัปเดต ${updatedCount} รายการ)`
+          : 'แก้ไขหมวดหมู่เรียบร้อย');
+      });
+    };
+
+    // Rename sub-category + update related transactions
+    window.renameSubCategory = function(i, j) {
+      const cat = window.appData.categories[managerType][i];
+      if (!cat || !cat.subs || !cat.subs[j]) return;
+      const oldSub = cat.subs[j];
+      window.openRenameModal('แก้ไขรายการย่อย', 'ชื่อใหม่จะถูกอัปเดตในรายการที่บันทึกไว้แล้วด้วย', oldSub, async (trimmed) => {
+        if (trimmed === oldSub) return;
+        if (cat.subs.some((s, idx) => idx !== j && s.toLowerCase() === trimmed.toLowerCase())) {
+          alert('มีรายการย่อยนี้อยู่แล้ว');
+          return;
+        }
+        cat.subs[j] = trimmed;
+        let updatedCount = 0;
+        (window.appData.transactions || []).forEach(tx => {
+          if (tx.type !== managerType || tx.category !== cat.name) return;
+          if (tx.subCategory === oldSub) {
+            tx.subCategory = trimmed;
+            updatedCount++;
+          } else if (tx.subCategory && tx.subCategory.includes(oldSub)) {
+            const parts = tx.subCategory.split(',').map(s => s.trim());
+            const idx = parts.indexOf(oldSub);
+            if (idx !== -1) {
+              parts[idx] = trimmed;
+              tx.subCategory = parts.join(', ');
+              updatedCount++;
+            }
+          }
+        });
+        window.syncDataToCloud(true);
+        if (window.currentUser && updatedCount > 0) {
+          try {
+            let batch = window.writeBatch(window.db);
+            let count = 0;
+            for (const tx of window.appData.transactions) {
+              if (tx.type === managerType && tx.category === cat.name &&
+                  (tx.subCategory === trimmed || (tx.subCategory || '').includes(trimmed))) {
+                const txRef = window.doc(window.db, "users", window.currentUser.uid, "transactions", tx.id);
+                batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
+                count++;
+                if (count >= 400) { await batch.commit(); batch = window.writeBatch(window.db); count = 0; }
+              }
+            }
+            if (count > 0) await batch.commit();
+          } catch (e) {
+            console.error('Rename sub tx sync error:', e);
+            window.showToast('อัปเดตรายการย่อยแล้ว แต่ซิงค์บางส่วนล้มเหลว', 'error');
+          }
+        }
+        window.renderCategoryTree();
+        window.refreshDashboard();
+        window.showToast(updatedCount > 0
+          ? `แก้ไขรายการย่อยเรียบร้อย (อัปเดต ${updatedCount} รายการ)`
+          : 'แก้ไขรายการย่อยเรียบร้อย');
+      });
+    };
 
     window.addNewCategory = function() {
       const nameInput = document.getElementById('newCatName');
@@ -2244,10 +2458,10 @@
       list.innerHTML = '';
 
       window.appData.materials.forEach((m, idx) => {
-        list.innerHTML += `<span class="bg-amber-50 text-amber-900 border border-amber-200 px-2.5 py-1 rounded-xl text-[11px] inline-flex items-center gap-1.5 font-medium">${escapeHTML(m)} <button onclick="deleteMaterialItem('วัตถุดิบ', ${idx})" class="text-amber-700 hover:text-rose-600"><i class="fa-solid fa-xmark"></i></button></span>`;
+        list.innerHTML += `<span class="bg-amber-50 text-amber-900 border border-amber-200 px-2.5 py-1 rounded-xl text-[11px] inline-flex items-center gap-1.5 font-medium">${escapeHTML(m)} <button onclick="renameMaterialItem('วัตถุดิบ', ${idx})" class="text-blue-600 hover:text-blue-800" title="แก้ไข"><i class="fa-solid fa-pen text-[9px]"></i></button> <button onclick="deleteMaterialItem('วัตถุดิบ', ${idx})" class="text-amber-700 hover:text-rose-600" title="ลบ"><i class="fa-solid fa-xmark"></i></button></span>`;
       });
       window.appData.equipments.forEach((eq, idx) => {
-        list.innerHTML += `<span class="bg-blue-50 text-blue-900 border border-blue-200 px-2.5 py-1 rounded-xl text-[11px] inline-flex items-center gap-1.5 font-medium">${escapeHTML(eq)} <button onclick="deleteMaterialItem('อุปกรณ์', ${idx})" class="text-blue-700 hover:text-rose-600"><i class="fa-solid fa-xmark"></i></button></span>`;
+        list.innerHTML += `<span class="bg-blue-50 text-blue-900 border border-blue-200 px-2.5 py-1 rounded-xl text-[11px] inline-flex items-center gap-1.5 font-medium">${escapeHTML(eq)} <button onclick="renameMaterialItem('อุปกรณ์', ${idx})" class="text-blue-600 hover:text-blue-800" title="แก้ไข"><i class="fa-solid fa-pen text-[9px]"></i></button> <button onclick="deleteMaterialItem('อุปกรณ์', ${idx})" class="text-blue-700 hover:text-rose-600" title="ลบ"><i class="fa-solid fa-xmark"></i></button></span>`;
       });
     }
 
@@ -2270,6 +2484,66 @@
       window.renderMaterialTags();
       window.showToast('เพิ่มรายการสำเร็จ');
     }
+
+    // Rename material / equipment + update transactions (via modal)
+    window.renameMaterialItem = function(type, idx) {
+      const arr = type === 'วัตถุดิบ' ? window.appData.materials : window.appData.equipments;
+      const oldName = arr[idx];
+      if (!oldName) return;
+      window.openRenameModal('แก้ไขชื่อ' + type, 'ชื่อใหม่จะถูกอัปเดตในรายการที่บันทึกไว้แล้วด้วย', oldName, async (trimmed) => {
+        if (trimmed === oldName) return;
+        if (arr.some((n, i) => i !== idx && n.toLowerCase() === trimmed.toLowerCase())) {
+          alert('มีรายการนี้อยู่แล้ว');
+          return;
+        }
+        arr[idx] = trimmed;
+        let updatedCount = 0;
+        (window.appData.transactions || []).forEach(tx => {
+          if (!tx.subCategory) return;
+          if (tx.subCategory === oldName) {
+            tx.subCategory = trimmed;
+            updatedCount++;
+          } else if (tx.subCategory.includes(oldName)) {
+            const parts = tx.subCategory.split(',').map(s => s.trim());
+            let changed = false;
+            for (let i = 0; i < parts.length; i++) {
+              if (parts[i] === oldName) {
+                parts[i] = trimmed;
+                changed = true;
+              }
+            }
+            if (changed) {
+              tx.subCategory = parts.join(', ');
+              updatedCount++;
+            }
+          }
+        });
+        window.syncDataToCloud(true);
+        if (window.currentUser && updatedCount > 0) {
+          try {
+            let batch = window.writeBatch(window.db);
+            let count = 0;
+            for (const tx of window.appData.transactions) {
+              if (tx.subCategory === trimmed || (tx.subCategory || '').includes(trimmed)) {
+                const txRef = window.doc(window.db, "users", window.currentUser.uid, "transactions", tx.id);
+                batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
+                count++;
+                if (count >= 400) { await batch.commit(); batch = window.writeBatch(window.db); count = 0; }
+              }
+            }
+            if (count > 0) await batch.commit();
+          } catch (e) {
+            console.error('Rename material tx sync error:', e);
+            window.showToast('แก้ไขชื่อแล้ว แต่ซิงค์รายการบางส่วนล้มเหลว', 'error');
+          }
+        }
+        window.renderMaterialTags();
+        window.refreshDashboard();
+        window.showToast(updatedCount > 0
+          ? `แก้ไข${type}เรียบร้อย (อัปเดต ${updatedCount} รายการ)`
+          : `แก้ไข${type}เรียบร้อย`);
+      });
+    };
 
     window.deleteMaterialItem = function(type, idx) {
       const itemName = type === 'วัตถุดิบ'
@@ -2515,6 +2789,106 @@
           setTimeout(() => Notification.requestPermission().catch(()=>{}), 3000);
         }
       };
+    }
+
+    // Confirm before leaving if there is unsynced data
+    window.addEventListener('beforeunload', function(e) {
+      const hasUnsynced = localStorage.getItem('somtumHasUnsyncedData') === 'true';
+      const pendingSettings = !!window._pendingSettingsSync;
+      if (hasUnsynced || pendingSettings) {
+        // Try one last sync attempt (best-effort; browser may cancel async)
+        try {
+          if (typeof window.syncDataToCloud === 'function' && window.currentUser) {
+            window.syncDataToCloud(true);
+          }
+          if (typeof window.saveLocalOnly === 'function') {
+            window.saveLocalOnly();
+          }
+        } catch (err) { /* ignore */ }
+        e.preventDefault();
+        e.returnValue = 'มีข้อมูลที่อาจยังไม่ได้ซิงค์ ต้องการออกจากหน้านี้จริงหรือไม่?';
+        return e.returnValue;
+      }
+    });
+
+    // ----- Online / Offline status + pending sync queue -----
+    window.updateNetworkStatusUI = function() {
+      const online = navigator.onLine;
+      const badge = document.getElementById('networkStatusBadge');
+      const text = document.getElementById('networkStatusText');
+      if (badge) {
+        if (online) {
+          badge.className = 'inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700';
+          badge.innerHTML = '<i class="fa-solid fa-wifi"></i> ออนไลน์';
+        } else {
+          badge.className = 'inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:border-rose-700';
+          badge.innerHTML = '<i class="fa-solid fa-plane"></i> ออฟไลน์';
+        }
+      }
+      if (text) {
+        if (online) {
+          text.className = 'text-[10px] mt-0.5 font-medium text-emerald-600';
+          text.innerHTML = '<i class="fa-solid fa-wifi mr-1"></i>ออนไลน์';
+        } else {
+          text.className = 'text-[10px] mt-0.5 font-medium text-rose-500';
+          text.innerHTML = '<i class="fa-solid fa-plane mr-1"></i>ออฟไลน์ — บันทึกในเครื่องก่อน';
+        }
+      }
+    };
+
+    window.flushPendingSync = async function() {
+      if (!navigator.onLine) return;
+      if (!window.currentUser) return;
+      const hasUnsynced = localStorage.getItem('somtumHasUnsyncedData') === 'true';
+      const pendingSettings = !!window._pendingSettingsSync;
+      if (!hasUnsynced && !pendingSettings) return;
+      try {
+        window.showToast('เน็ตกลับมาแล้ว กำลังซิงค์ข้อมูลค้าง...', 'success');
+        if (typeof window.checkAndSyncCloudData === 'function') {
+          await window.checkAndSyncCloudData(false);
+        } else if (typeof window.syncDataToCloud === 'function') {
+          window.syncDataToCloud(true);
+        }
+      } catch (e) {
+        console.error('flushPendingSync error:', e);
+      }
+    };
+
+    window.addEventListener('online', function() {
+      window.updateNetworkStatusUI();
+      window.showToast('กลับมาออนไลน์แล้ว', 'success');
+      // Small delay to let network stabilize
+      setTimeout(() => window.flushPendingSync(), 1200);
+    });
+    window.addEventListener('offline', function() {
+      window.updateNetworkStatusUI();
+      window.showToast('ออฟไลน์ — ข้อมูลจะถูกบันทึกในเครื่อง', 'error');
+    });
+    // Initial paint
+    window.updateNetworkStatusUI();
+
+    // Mark unsynced when writes happen while offline
+    if (typeof window.saveLocalOnly === 'function') {
+      const _origSaveLocalNet = window.saveLocalOnly;
+      window.saveLocalOnly = function() {
+        _origSaveLocalNet();
+        if (!navigator.onLine && window.currentUser) {
+          localStorage.setItem('somtumHasUnsyncedData', 'true');
+        }
+      };
+    }
+
+    // ----- Register Service Worker -----
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        // Prefer sibling service-worker.js (same directory as this HTML when hosted)
+        const swUrl = 'service-worker.js';
+        navigator.serviceWorker.register(swUrl).then(function(reg) {
+          console.log('Service Worker registered:', reg.scope);
+        }).catch(function(err) {
+          console.warn('Service Worker registration failed:', err);
+        });
+      });
     }
 
   </script>
