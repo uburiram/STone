@@ -336,11 +336,18 @@ const firebaseConfig = {
       });
 
       const txCollRef = collection(db, "users", window.currentUser.uid, "transactions");
-      window.unsubTransactions = onSnapshot(txCollRef, (querySnap) => {
+      window.unsubTransactions = onSnapshot(txCollRef, async (querySnap) => {
         const txs = [];
         querySnap.forEach((d) => { txs.push(d.data()); });
-        window.appData.transactions = txs;
-        window.appData = window.sanitizeAppData(window.appData);
+        // Persist cloud snapshot into structured IDB (per-tx), then load current filter range
+        if (SomtumStore.persistAppState) {
+          const tmp = window.sanitizeAppData(Object.assign({}, window.appData, { transactions: txs }));
+          await SomtumStore.persistAppState(tmp, { writeAllTx: true });
+        }
+        window.appData = window.sanitizeAppData(Object.assign({}, window.appData, { transactions: txs }));
+        if (typeof window.ensureTransactionsLoaded === 'function') {
+          await window.ensureTransactionsLoaded(true);
+        }
         window.saveLocalOnly();
         window.refreshDashboard();
         window.updateSyncUI(true);
@@ -398,20 +405,38 @@ const firebaseConfig = {
     window._doSoftSyncToCloud = async function() {
       if (!window.currentUser || !window.db) return;
       window.appData = window.sanitizeAppData(window.appData);
-      const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
-      const payload = JSON.parse(JSON.stringify({
-        categories: window.appData.categories,
-        materials: window.appData.materials || [],
-        equipments: window.appData.equipments || [],
-        customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
-        updatedAt: new Date().toISOString()
-      }));
-      await setDoc(settingsRef, payload, { merge: true });
+
+      // Settings only when meta dirty (or always once if API missing)
+      const metaDirty = !SomtumStore.isMetaDirty || await SomtumStore.isMetaDirty();
+      if (metaDirty) {
+        const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
+        const payload = JSON.parse(JSON.stringify({
+          categories: window.appData.categories,
+          materials: window.appData.materials || [],
+          equipments: window.appData.equipments || [],
+          customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+          updatedAt: new Date().toISOString()
+        }));
+        await setDoc(settingsRef, payload, { merge: true });
+        if (SomtumStore.clearMetaDirty) await SomtumStore.clearMetaDirty();
+      }
+
+      // Incremental: only dirty transactions (fallback: current memory range if no dirty API)
+      let dirtyIds = SomtumStore.getDirtyIds ? await SomtumStore.getDirtyIds() : [];
+      let deletedIds = SomtumStore.getDeletedIds ? await SomtumStore.getDeletedIds() : [];
+
+      if ((!dirtyIds || !dirtyIds.length) && (!deletedIds || !deletedIds.length)) {
+        // Nothing queued — still ok (settings may have been the only change)
+        return;
+      }
 
       let batch = writeBatch(db);
       let count = 0;
-      for (const tx of (window.appData.transactions || [])) {
-        const txRef = doc(db, "users", window.currentUser.uid, "transactions", tx.id);
+      for (const id of dirtyIds) {
+        let tx = (window.appData.transactions || []).find(t => t.id === id);
+        if (!tx && SomtumStore.getTx) tx = await SomtumStore.getTx(id);
+        if (!tx) continue;
+        const txRef = doc(db, "users", window.currentUser.uid, "transactions", id);
         batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
         count++;
         if (count >= 400) {
@@ -420,7 +445,20 @@ const firebaseConfig = {
           count = 0;
         }
       }
+      for (const id of deletedIds) {
+        const txRef = doc(db, "users", window.currentUser.uid, "transactions", id);
+        batch.delete(txRef);
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
       if (count > 0) await batch.commit();
+
+      if (SomtumStore.clearDirty) await SomtumStore.clearDirty(dirtyIds);
+      if (SomtumStore.clearDeleted) await SomtumStore.clearDeleted(deletedIds);
     };
 
     /**
@@ -431,13 +469,42 @@ const firebaseConfig = {
       if (!window.currentUser || !window.db) return;
       window.showToast('กำลังซิงค์แบบเครื่องนี้เป็นต้นทาง...');
       try {
-        await window._doSoftSyncToCloud();
+        // Full local set from IDB (not only in-memory range)
+        let allTx = window.appData.transactions || [];
+        if (SomtumStore.getAllTx) {
+          allTx = await SomtumStore.getAllTx();
+        }
+        window.appData = window.sanitizeAppData(Object.assign({}, window.appData, { transactions: allTx }));
 
-        const localIds = new Set((window.appData.transactions || []).map(t => t.id));
-        const txCollRef = collection(db, "users", window.currentUser.uid, "transactions");
-        const snap = await getDocs(txCollRef);
+        const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
+        await setDoc(settingsRef, JSON.parse(JSON.stringify({
+          categories: window.appData.categories,
+          materials: window.appData.materials || [],
+          equipments: window.appData.equipments || [],
+          customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+          updatedAt: new Date().toISOString()
+        })), { merge: true });
+
         let batch = writeBatch(db);
         let count = 0;
+        for (const tx of allTx) {
+          if (!tx || !tx.id) continue;
+          const txRef = doc(db, "users", window.currentUser.uid, "transactions", tx.id);
+          batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
+          count++;
+          if (count >= 400) {
+            await batch.commit();
+            batch = writeBatch(db);
+            count = 0;
+          }
+        }
+        if (count > 0) await batch.commit();
+
+        const localIds = new Set(allTx.map(t => t.id));
+        const txCollRef = collection(db, "users", window.currentUser.uid, "transactions");
+        const snap = await getDocs(txCollRef);
+        batch = writeBatch(db);
+        count = 0;
         let pruned = 0;
         for (const d of snap.docs) {
           if (!localIds.has(d.id)) {
@@ -452,6 +519,10 @@ const firebaseConfig = {
           }
         }
         if (count > 0) await batch.commit();
+
+        if (SomtumStore.clearDirty) await SomtumStore.clearDirty([]);
+        if (SomtumStore.clearDeleted) await SomtumStore.clearDeleted([]);
+        if (SomtumStore.clearMetaDirty) await SomtumStore.clearMetaDirty();
 
         window.updateSyncUI(true);
         SomtumStore.removeItem('somtumHasUnsyncedData');
@@ -483,7 +554,7 @@ const firebaseConfig = {
       }
 
       if (forcePrompt) {
-        const localCount = (window.appData.transactions || []).length;
+        const localCount = (SomtumStore.countTx ? await SomtumStore.countTx() : (window.appData.transactions || []).length);
         window.showConfirmModal(
           'ซิงค์แบบเครื่องนี้เป็นต้นทาง',
           `ระบบจะอัปโหลดข้อมูลในเครื่องนี้ขึ้น Cloud ทั้งหมด (${localCount} รายการ) แล้วลบรายการบน Cloud ที่ไม่มีในเครื่องนี้\n\n⚠️ ถ้าใช้อีกเครื่องและยังไม่ได้ซิงค์มา ข้อมูลเครื่องอื่นอาจหาย\n\nต้องการดำเนินการต่อหรือไม่?`,
@@ -623,21 +694,28 @@ const firebaseConfig = {
       }
     };
 
-    // Single unified saveLocalOnly: localStorage + offline flag + debounced auto-backup
+    // saveLocalOnly: meta + flags only (transactions already in IDB per-record)
     window.saveLocalOnly = function() {
       try {
-        SomtumStore.setItem('somtumAppData', JSON.stringify(window.appData));
+        if (window.SomtumStore && SomtumStore.persistAppState) {
+          // fire-and-forget meta persist (tx written at call site)
+          SomtumStore.persistAppState(window.appData, { writeAllTx: false }).catch(function(e) {
+            console.error('persistAppState', e);
+          });
+        } else {
+          // Fallback legacy path
+          SomtumStore.setItem('somtumAppData', JSON.stringify(window.appData));
+        }
         if (!navigator.onLine && window.currentUser) {
           SomtumStore.setItem('somtumHasUnsyncedData', 'true');
           if (typeof window.updatePendingSyncButton === 'function') window.updatePendingSyncButton();
         }
-        // Debounced auto-backup
         if (typeof window.performAutoBackup === 'function') {
           clearTimeout(window._autoBakT);
-          window._autoBakT = setTimeout(window.performAutoBackup, 5000);
+          window._autoBakT = setTimeout(function() { window.performAutoBackup(); }, 5000);
         }
       } catch (e) {
         console.error("saveLocalOnly failed:", e);
-        throw e; // surface QuotaExceededError etc.
+        throw e;
       }
     };

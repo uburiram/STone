@@ -102,8 +102,84 @@
     // CRITICAL: Hydrate from SomtumStore (IndexedDB primary, localStorage fallback).
     // Safe to call before/after SomtumStore.init() — getItem falls back to LS until migration runs.
     // Module script (Firebase Auth) may restore session before onload; empty appData would cause data loss.
-    window.__hydrateAppDataFromStore = function(preferRicher) {
+    window.__txCacheLoaded = false;
+    window.__loadedRange = { start: null, end: null };
+
+    /** Compute YYYY-MM-DD bounds for current time filter (inclusive). null = all */
+    window.getFilterDateBounds = function() {
+      const now = new Date();
+      const ymd = (d) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return y + '-' + m + '-' + day;
+      };
+      if (currentFilter === 'custom') {
+        return { start: selectedCustomDate, end: selectedCustomDate };
+      }
+      if (currentFilter === 'range') {
+        let a = selectedStartDate, b = selectedEndDate;
+        if (a && b && a > b) { const t = a; a = b; b = t; }
+        return { start: a || null, end: b || null };
+      }
+      if (currentFilter === 'daily') {
+        const t = getLocalYYYYMMDD();
+        return { start: t, end: t };
+      }
+      if (currentFilter === 'weekly') {
+        const day = now.getDay();
+        const diff = day === 0 ? -6 : 1 - day;
+        const startOfWeek = new Date(now);
+        startOfWeek.setDate(now.getDate() + diff);
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+        return { start: ymd(startOfWeek), end: ymd(endOfWeek) };
+      }
+      if (currentFilter === 'monthly') {
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        return { start: ymd(start), end: ymd(end) };
+      }
+      if (currentFilter === 'yearly') {
+        return { start: now.getFullYear() + '-01-01', end: now.getFullYear() + '-12-31' };
+      }
+      return { start: null, end: null }; // all
+    };
+
+    /** Load transactions for filter range into appData (from IDB, not giant LS blob) */
+    window.ensureTransactionsLoaded = async function(force) {
+      if (!window.SomtumStore || !SomtumStore.getTxByDateRange) return;
+      const bounds = window.getFilterDateBounds();
+      // Also include calendar month when viewing calendar
+      let start = bounds.start;
+      let end = bounds.end;
+      if (typeof calendarCurrentDate !== 'undefined' && calendarCurrentDate) {
+        const cy = calendarCurrentDate.getFullYear();
+        const cm = calendarCurrentDate.getMonth();
+        const cStart = cy + '-' + String(cm + 1).padStart(2, '0') + '-01';
+        const lastDay = new Date(cy, cm + 1, 0).getDate();
+        const cEnd = cy + '-' + String(cm + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+        if (!start || cStart < start) start = cStart;
+        if (!end || cEnd > end) end = cEnd;
+      }
+      const same = window.__loadedRange && window.__loadedRange.start === start && window.__loadedRange.end === end;
+      if (same && window.__txCacheLoaded && !force) return;
+
       try {
+        const list = await SomtumStore.getTxByDateRange(start, end);
+        window.appData.transactions = list || [];
+        window.__loadedRange = { start: start, end: end };
+        window.__txCacheLoaded = true;
+      } catch (e) {
+        console.error('ensureTransactionsLoaded failed', e);
+      }
+    };
+
+    window.__hydrateAppDataFromStore = function(preferRicher) {
+      // Sync path: try meta + optional legacy blob only for structure defaults
+      try {
+        // Prefer structured meta when available via cached memory after init
+        // Full async hydrate happens in __hydrateAppDataFromStoreAsync
         const savedData = SomtumStore.getItem('somtumAppData');
         if (savedData) {
           const parsed = window.sanitizeAppData(JSON.parse(savedData));
@@ -111,10 +187,19 @@
             const memLen = window.appData.transactions.length;
             const diskLen = (parsed.transactions || []).length;
             if (diskLen >= memLen) {
-              window.appData = parsed;
+              // Keep categories/settings from legacy; txs will be replaced by IDB range load
+              window.appData.categories = parsed.categories;
+              window.appData.materials = parsed.materials;
+              window.appData.equipments = parsed.equipments;
+              window.appData.customGoal = parsed.customGoal;
+              if (!window.__txCacheLoaded) window.appData.transactions = parsed.transactions;
             }
           } else {
-            window.appData = parsed;
+            window.appData.categories = parsed.categories;
+            window.appData.materials = parsed.materials;
+            window.appData.equipments = parsed.equipments;
+            window.appData.customGoal = parsed.customGoal;
+            if (!window.__txCacheLoaded) window.appData.transactions = parsed.transactions || [];
           }
         } else if (!window.appData || !Array.isArray(window.appData.transactions)) {
           window.appData = window.sanitizeAppData(window.appData || {});
@@ -126,14 +211,34 @@
         }
       }
     };
+
+    window.__hydrateAppDataFromStoreAsync = async function() {
+      try {
+        if (SomtumStore.getMeta) {
+          const meta = await SomtumStore.getMeta();
+          if (meta) {
+            if (meta.categories) window.appData.categories = meta.categories;
+            if (meta.materials) window.appData.materials = meta.materials;
+            if (meta.equipments) window.appData.equipments = meta.equipments;
+            if (meta.customGoal !== undefined) window.appData.customGoal = meta.customGoal;
+            window.appData = window.sanitizeAppData(window.appData);
+          }
+        }
+        await window.ensureTransactionsLoaded(true);
+      } catch (e) {
+        console.error('async hydrate failed', e);
+        window.__hydrateAppDataFromStore(true);
+      }
+    };
+
     window.__hydrateAppDataFromStore(false);
 
-    // After IDB migration, re-hydrate if store has richer data
+    // After IDB migration, load meta + range (not full blob into RAM forever)
     if (window.SomtumStore && typeof window.SomtumStore.init === 'function') {
-      window.SomtumStore.init().then(function () {
-        window.__hydrateAppDataFromStore(true);
+      window.SomtumStore.init().then(async function () {
+        await window.__hydrateAppDataFromStoreAsync();
         if (typeof window.refreshDashboard === 'function' && document.getElementById('kpiTotalIncome')) {
-          try { window.refreshDashboard(); } catch (e) { /* UI may not be ready */ }
+          try { await window.refreshDashboard(); } catch (e) { /* UI may not be ready */ }
         }
       }).catch(function (e) {
         console.warn('SomtumStore.init from app.js:', e);
@@ -835,17 +940,23 @@
         window.appData.transactions.push(txObj);
       }
 
-      // Save local first (with error feedback)
+      // Save local: single tx to IDB + meta (no giant LS blob)
       try {
+        if (window.SomtumStore && SomtumStore.putTx) {
+          await SomtumStore.putTx(txObj);
+          await SomtumStore.markDirty(txObj.id);
+          await SomtumStore.persistAppState(window.appData, { writeAllTx: false });
+        }
         window.saveLocalOnly();
       } catch (err) {
+        console.error(err);
         window.showToast('บันทึกลงเครื่องล้มเหลว (ที่เก็บข้อมูลอาจเต็ม)', 'error');
         return;
       }
 
       closeTransactionModal();
 
-      // Then try cloud
+      // Then try cloud (incremental — single doc)
       try {
         await window.saveTransactionToFirestore(txObj);
         window.showToast(editId ? 'อัปเดตข้อมูลแล้ว' : 'บันทึกข้อมูลเรียบร้อย');
@@ -871,6 +982,9 @@
       window.showConfirmModal("ยืนยันการลบ", "คุณต้องการลบรายการนี้ใช่หรือไม่?", async () => {
         window.appData.transactions = window.appData.transactions.filter(t => t.id !== id);
         try {
+          if (window.SomtumStore && SomtumStore.markDeleted) {
+            await SomtumStore.markDeleted(id);
+          }
           window.saveLocalOnly();
         } catch (err) {
           window.showToast('ลบในเครื่องล้มเหลว', 'error');
@@ -1079,8 +1193,14 @@
       window.showToast('ส่งออก CSV เรียบร้อยแล้ว');
     };
 
-    window.exportDataToJSON = function() {
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(window.appData));
+    window.exportDataToJSON = async function() {
+      let payload = window.appData;
+      try {
+        if (window.SomtumStore && SomtumStore.buildLegacyAppData) {
+          payload = await SomtumStore.buildLegacyAppData(window.appData);
+        }
+      } catch (e) { console.warn('export buildLegacy', e); }
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload));
       const downloadAnchorNode = document.createElement('a');
       downloadAnchorNode.setAttribute("href", dataStr);
       downloadAnchorNode.setAttribute("download", `somtum-backup-${window.getLocalYYYYMMDD()}.json`);
@@ -1726,13 +1846,16 @@
 
     // ----- Auto Backup (stronger hash + scoped) -----
     let lastAutoBackupHash = '';
-    window.performAutoBackup = function() {
+    window.performAutoBackup = async function() {
       try {
-        const dataStr = JSON.stringify(window.appData);
-        // Stronger hash: length + tx count + simple amount checksum
+        let data = window.appData;
+        if (window.SomtumStore && SomtumStore.buildLegacyAppData) {
+          data = await SomtumStore.buildLegacyAppData(window.appData);
+        }
+        const dataStr = JSON.stringify(data);
         let amountSum = 0;
-        (window.appData.transactions || []).forEach(t => amountSum += Number(t.amount) || 0);
-        const hash = dataStr.length + '_' + (window.appData.transactions || []).length + '_' + amountSum.toFixed(2);
+        (data.transactions || []).forEach(t => amountSum += Number(t.amount) || 0);
+        const hash = dataStr.length + '_' + (data.transactions || []).length + '_' + amountSum.toFixed(2);
         if (hash !== lastAutoBackupHash) {
           SomtumStore.setItem('somtumAutoBackup', dataStr);
           SomtumStore.setItem('somtumAutoBackupTime', new Date().toISOString());
