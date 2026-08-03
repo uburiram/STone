@@ -1,3 +1,25 @@
+    /** Money helpers — consistent 2-decimal arithmetic (avoid float drift / NaN) */
+    window.roundMoney = function(n) {
+      const x = Number(n);
+      if (!isFinite(x)) return 0;
+      return Math.round(x * 100) / 100;
+    };
+    /** Sum income/expense from a transaction list. Unknown types are ignored. */
+    window.sumIncomeExpense = function(list) {
+      let income = 0, expense = 0;
+      (list || []).forEach(function(tx) {
+        if (!tx) return;
+        const a = window.roundMoney(tx.amount);
+        if (tx.type === 'income') income = window.roundMoney(income + a);
+        else if (tx.type === 'expense') expense = window.roundMoney(expense + a);
+      });
+      return {
+        income: income,
+        expense: expense,
+        net: window.roundMoney(income - expense)
+      };
+    };
+
     window.escapeHTML = function(str) {
       if (typeof str !== 'string') return str;
       return str.replace(/[&<>'"]/g, tag => ({
@@ -581,10 +603,10 @@
         const cat = tx.category || 'ไม่ระบุหมวดหมู่';
         const sub = tx.subCategory || 'ทั่วไป';
         if (!grouped[cat]) grouped[cat] = { total: 0, subs: {} };
-        grouped[cat].total += Number(tx.amount) || 0;
+        grouped[cat].total = window.roundMoney(grouped[cat].total + window.roundMoney(tx.amount));
 
         if (!grouped[cat].subs[sub]) grouped[cat].subs[sub] = { total: 0, items: [] };
-        grouped[cat].subs[sub].total += Number(tx.amount) || 0;
+        grouped[cat].subs[sub].total = window.roundMoney(grouped[cat].subs[sub].total + window.roundMoney(tx.amount));
         grouped[cat].subs[sub].items.push(tx);
       });
 
@@ -666,22 +688,24 @@
       }
     }
 
-    window.refreshDashboard = function() {
+    window.refreshDashboard = async function() {
+      try {
+        if (typeof window.ensureTransactionsLoaded === 'function') {
+          await window.ensureTransactionsLoaded(false);
+        }
+      } catch (e) { console.warn('tx load before refresh', e); }
       if (typeof window.populateHistoryCategoryFilter === 'function') window.populateHistoryCategoryFilter();
       // KPI / ratio / goal: time filter only (not history search/type/category filters)
       const kpiTx = window.getTimeFilteredTransactions();
       // History list & category report: full filters
       const filteredTx = window.getFilteredTransactions();
-      let totalIncome = 0, totalExpense = 0;
+      const sums = window.sumIncomeExpense(kpiTx);
+      const totalIncome = sums.income;
+      const totalExpense = sums.expense;
 
-      kpiTx.forEach(tx => {
-        if (tx.type === 'income') totalIncome += Number(tx.amount);
-        if (tx.type === 'expense') totalExpense += Number(tx.amount);
-      });
-
-      const netProfit = totalIncome - totalExpense;
-      let targetGoal = totalExpense > 0 ? totalExpense * 1.6 : (totalIncome > 0 ? totalIncome : 1000);
-      if (window.appData.customGoal && window.appData.customGoal > 0) targetGoal = window.appData.customGoal;
+      const netProfit = sums.net;
+      let targetGoal = totalExpense > 0 ? window.roundMoney(totalExpense * 1.6) : (totalIncome > 0 ? totalIncome : 1000);
+      if (window.appData.customGoal && window.appData.customGoal > 0) targetGoal = window.roundMoney(window.appData.customGoal);
 
       const goalAchievedPercent = targetGoal > 0 ? (totalIncome / targetGoal) * 100 : 0;
 
@@ -956,7 +980,7 @@
 
       const txObj = {
         id: editId || (crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2))),
-        type, date, time, category, subCategory, amount: amountVal, note
+        type, date, time, category, subCategory, amount: window.roundMoney(amountVal), note
       };
 
       if(editId) {
@@ -1062,7 +1086,7 @@
         title.innerHTML = `<i class="fa-solid fa-chart-line mr-2"></i>รายละเอียดกำไร/ขาดทุน`;
       }
 
-      listData.forEach(t => totalAmount += Number(t.amount) || 0);
+      listData.forEach(t => totalAmount = window.roundMoney(totalAmount + window.roundMoney(t.amount)));
 
       document.getElementById('cardDetailSummary').innerHTML = `
         <div>พบข้อมูลทั้งหมด <strong>${listData.length}</strong> รายการ (ตามตัวกรองเวลาปัจจุบัน)</div>
@@ -1077,11 +1101,12 @@
       document.getElementById('customGoalInput').value = window.appData.customGoal || '';
       const filteredTx = window.getTimeFilteredTransactions();
       let totalIncome = 0, totalExpense = 0;
-      filteredTx.forEach(t => {
-        if (t.type === 'income') totalIncome += Number(t.amount);
-        else totalExpense += Number(t.amount);
-      });
-      let calc = totalExpense > 0 ? totalExpense * 1.6 : (totalIncome > 0 ? totalIncome : 1000);
+      {
+        const gSums = window.sumIncomeExpense(filteredTx);
+        totalIncome = gSums.income;
+        totalExpense = gSums.expense;
+      }
+      let calc = totalExpense > 0 ? window.roundMoney(totalExpense * 1.6) : (totalIncome > 0 ? totalIncome : 1000);
       let formulaText = '';
       if (window.appData.customGoal && window.appData.customGoal > 0) {
         formulaText = `เป้าหมายที่ตั้งเอง: ฿${Number(window.appData.customGoal).toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
@@ -1103,7 +1128,7 @@
         alert('กรุณาใส่เป้าหมายที่เป็นตัวเลขมากกว่า 0');
         return;
       }
-      window.appData.customGoal = val;
+      window.appData.customGoal = window.roundMoney(val);
       window.syncDataToCloud(true);
       window.refreshDashboard();
       window.showToast('ตั้งเป้าหมายสำเร็จ');
@@ -1133,8 +1158,8 @@
       txList.forEach(tx => {
         const d = tx.date || 'ไม่ระบุวันที่';
         if (!dateGrouped[d]) dateGrouped[d] = { inc: 0, exp: 0, items: [] };
-        if (tx.type === 'income') dateGrouped[d].inc += Number(tx.amount) || 0;
-        if (tx.type === 'expense') dateGrouped[d].exp += Number(tx.amount) || 0;
+        if (tx.type === 'income') dateGrouped[d].inc = window.roundMoney(dateGrouped[d].inc + window.roundMoney(tx.amount));
+        if (tx.type === 'expense') dateGrouped[d].exp = window.roundMoney(dateGrouped[d].exp + window.roundMoney(tx.amount));
         dateGrouped[d].items.push(tx);
       });
 
@@ -1408,9 +1433,9 @@
         let net = 0;
 
         if(txs.length > 0) {
-          let inc=0, exp=0;
-          txs.forEach(t => t.type==='income' ? inc+=Number(t.amount) : exp+=Number(t.amount));
-          net = inc - exp;
+          const daySums = window.sumIncomeExpense(txs);
+          let inc = daySums.income, exp = daySums.expense;
+          net = daySums.net;
 
           // สีพื้นหลังตามกำไร/ขาดทุน
           if (net > 0) {
@@ -1863,12 +1888,9 @@
     // ----- Goal Notification (persistent flag) -----
     window.checkGoalNotification = function() {
       const filteredTx = window.getTimeFilteredTransactions();
-      let totalIncome = 0, totalExpense = 0;
-      filteredTx.forEach(tx => {
-        if (tx.type === 'income') totalIncome += Number(tx.amount);
-        if (tx.type === 'expense') totalExpense += Number(tx.amount);
-      });
-      let targetGoal = totalExpense > 0 ? totalExpense * 1.6 : (totalIncome > 0 ? totalIncome : 1000);
+      const gSums = window.sumIncomeExpense(filteredTx);
+      let totalIncome = gSums.income, totalExpense = gSums.expense;
+      let targetGoal = totalExpense > 0 ? window.roundMoney(totalExpense * 1.6) : (totalIncome > 0 ? totalIncome : 1000);
       if (window.appData.customGoal && window.appData.customGoal > 0) targetGoal = window.appData.customGoal;
       const pct = targetGoal > 0 ? (totalIncome / targetGoal) * 100 : 0;
       const now = Date.now();
@@ -1890,11 +1912,11 @@
       }
     };
 
-    // Hook into refreshDashboard (safe)
+    // Hook into refreshDashboard (safe, preserve async)
     if (typeof window.refreshDashboard === 'function') {
       const originalRefresh = window.refreshDashboard;
-      window.refreshDashboard = function() {
-        originalRefresh();
+      window.refreshDashboard = async function() {
+        await originalRefresh();
         window.checkGoalNotification();
       };
     }
@@ -2033,9 +2055,9 @@
         doc.setFont(fontName, 'normal');
       }
 
-      let totalInc = 0, totalExp = 0;
-      txs.forEach(t => t.type === 'income' ? totalInc += Number(t.amount) : totalExp += Number(t.amount));
-      const net = totalInc - totalExp;
+      const pdfSums = window.sumIncomeExpense(txs);
+      const totalInc = pdfSums.income, totalExp = pdfSums.expense;
+      const net = pdfSums.net;
 
       doc.setFontSize(16);
       doc.text('รายงานรายรับ-รายจ่าย ส้มตำนายหนึ่ง', 105, 15, { align: 'center' });
@@ -2189,14 +2211,20 @@
     };
 
     // ----- Daily slip (fullscreen on-screen + print) -----
-    window.printDailySlip = function() {
+    window.printDailySlip = async function() {
       const today = (typeof getLocalYYYYMMDD === 'function')
         ? getLocalYYYYMMDD()
         : window.getLocalYYYYMMDD();
-      const txs = (window.appData.transactions || []).filter(t => t.date === today);
-      let inc = 0, exp = 0;
-      txs.forEach(t => t.type === 'income' ? inc += Number(t.amount) : exp += Number(t.amount));
-      const net = inc - exp;
+      // Prefer IDB for today so slip is complete even if memory only has a filter range
+      let txs = (window.appData.transactions || []).filter(t => t.date === today);
+      try {
+        if (window.SomtumStore && SomtumStore.getTxByDateRange) {
+          const fromIdb = await SomtumStore.getTxByDateRange(today, today);
+          if (fromIdb && fromIdb.length) txs = fromIdb;
+        }
+      } catch (e) { console.warn('printDailySlip IDB', e); }
+      const sums = window.sumIncomeExpense(txs);
+      const inc = sums.income, exp = sums.expense, net = sums.net;
 
       // Percentages
       const marginPct = inc > 0 ? (net / inc) * 100 : 0;           // กำไรต่อรายรับ
