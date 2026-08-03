@@ -1,8 +1,11 @@
 /* Somtum Service Worker - offline shell cache */
-const CACHE_NAME = 'somtum-v5';
+const CACHE_NAME = 'somtum-v6';
 const CORE_ASSETS = [
   './',
   './index.html',
+  './js/storage.js',
+  './js/app.js',
+  './js/firebase.js',
   'https://cdn.tailwindcss.com',
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
   'https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap',
@@ -39,7 +42,8 @@ self.addEventListener('fetch', (event) => {
     url.hostname.includes('firebaseio.com') ||
     url.hostname.includes('firestore.googleapis.com') ||
     url.hostname.includes('identitytoolkit.googleapis.com') ||
-    url.hostname.includes('securetoken.googleapis.com');
+    url.hostname.includes('securetoken.googleapis.com') ||
+    url.hostname.includes('gstatic.com');
 
   if (isFirebase) return;
 
@@ -59,4 +63,11 @@ self.addEventListener('fetch', (event) => {
       return cached || fetchPromise;
     })
   );
+});
+
+// Allow page to force activate new SW
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
