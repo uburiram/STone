@@ -1,5 +1,5 @@
 /* Somtum Service Worker - offline shell cache */
-const CACHE_NAME = 'somtum-v6';
+const CACHE_NAME = 'somtum-v7';
 const CORE_ASSETS = [
   './',
   './index.html',
