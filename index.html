@@ -794,6 +794,10 @@
       localStorage.setItem('somtumDataOwnerUid', window.currentUser.uid);
       const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
       window.unsubSettings = onSnapshot(settingsRef, (docSnap) => {
+        // Skip applying remote settings while local category/settings write is in flight
+        // to prevent race condition that wipes newly added categories
+        if (window._pendingSettingsSync) return;
+
         if (docSnap.exists()) {
           const data = docSnap.data();
           if (data.categories) window.appData.categories = data.categories;
@@ -881,15 +885,20 @@
     };
 
     let syncTimer = null;
-    window.syncDataToCloud = function() {
+    // Flag to prevent onSnapshot from overwriting local category/settings changes
+    window._pendingSettingsSync = false;
+
+    window.syncDataToCloud = function(immediate = false) {
       window.saveLocalOnly();
       if (!window.currentUser) {
         localStorage.setItem('somtumHasUnsyncedData', 'true');
         return;
       }
       window.updateSyncUI(false);
+      window._pendingSettingsSync = true;
       if (syncTimer) clearTimeout(syncTimer);
-      syncTimer = setTimeout(async () => {
+
+      const doSync = async () => {
         try {
           const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
           await setDoc(settingsRef, {
@@ -899,11 +908,21 @@
             customGoal: window.appData.customGoal,
             updatedAt: new Date().toISOString()
           }, { merge: true });
+          window._pendingSettingsSync = false;
           window.updateSyncUI(true);
         } catch (e) {
-          console.error("Debounced sync error:", e);
+          console.error("Settings sync error:", e);
+          window._pendingSettingsSync = false;
+          window.updateSyncUI(false);
+          window.showToast('ซิงค์หมวดหมู่/ตั้งค่าล้มเหลว กรุณากดปุ่มซิงค์', 'error');
         }
-      }, 800);
+      };
+
+      if (immediate) {
+        doSync();
+      } else {
+        syncTimer = setTimeout(doSync, 500);
+      }
     };
 
     window.saveTransactionToFirestore = async function(txObj) {
@@ -1760,7 +1779,7 @@
         return;
       }
       window.appData.customGoal = val;
-      window.syncDataToCloud();
+      window.syncDataToCloud(true);
       window.refreshDashboard();
       window.showToast('ตั้งเป้าหมายสำเร็จ');
       document.getElementById('goalDetailModal').classList.add('hidden');
@@ -1769,7 +1788,7 @@
     window.clearCustomGoal = function() {
       window.appData.customGoal = null;
       document.getElementById('customGoalInput').value = '';
-      window.syncDataToCloud();
+      window.syncDataToCloud(true);
       window.refreshDashboard();
       window.showToast('กลับไปใช้เป้าหมายสูตรปกติ');
     }
@@ -2144,7 +2163,7 @@
       document.getElementById('newCatIsMaterial').checked = false;
       document.getElementById('newCatIsEquipment').checked = false;
 
-      window.syncDataToCloud();
+      window.syncDataToCloud(true); // immediate sync for categories
       window.renderCategoryTree();
       window.showToast('เพิ่มหมวดหมู่เรียบร้อย');
     }
@@ -2157,7 +2176,7 @@
         : "การลบหมวดหมู่หลักจะทำให้รายการย่อยทั้งหมดถูกลบด้วย";
       window.showConfirmModal("ยืนยันการลบหมวดหมู่", warnMsg, () => {
         window.appData.categories[managerType].splice(i, 1);
-        window.syncDataToCloud();
+        window.syncDataToCloud(true);
         window.renderCategoryTree();
         window.showToast('ลบหมวดหมู่แล้ว');
       });
@@ -2177,7 +2196,7 @@
 
       cat.subs.push(val);
       input.value = '';
-      window.syncDataToCloud();
+      window.syncDataToCloud(true);
       window.renderCategoryTree();
       window.showToast('เพิ่มรายการย่อยแล้ว');
     }
@@ -2186,7 +2205,7 @@
       const subName = window.appData.categories[managerType][i]?.subs?.[j] || 'รายการนี้';
       window.showConfirmModal("ยืนยันการลบรายการย่อย", `ต้องการลบ "${subName}" ใช่หรือไม่?`, () => {
         window.appData.categories[managerType][i].subs.splice(j, 1);
-        window.syncDataToCloud();
+        window.syncDataToCloud(true);
         window.renderCategoryTree();
         window.showToast('ลบรายการย่อยแล้ว');
       });
@@ -2220,7 +2239,7 @@
       }
 
       nameInput.value = '';
-      window.syncDataToCloud();
+      window.syncDataToCloud(true);
       window.renderMaterialTags();
       window.showToast('เพิ่มรายการสำเร็จ');
     }
@@ -2236,7 +2255,7 @@
       window.showConfirmModal("ยืนยันการลบ", warnMsg, () => {
         if(type === 'วัตถุดิบ') window.appData.materials.splice(idx, 1);
         else window.appData.equipments.splice(idx, 1);
-        window.syncDataToCloud();
+        window.syncDataToCloud(true);
         window.renderMaterialTags();
         window.showToast('ลบรายการสำเร็จ');
       });
