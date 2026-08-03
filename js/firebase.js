@@ -3,7 +3,7 @@
  * Depends on: SomtumStore (js/storage.js), window.appData helpers (js/app.js)
  */
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence, indexedDBLocalPersistence, browserPopupRedirectResolver } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import { getAuth, initializeAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence, indexedDBLocalPersistence, browserPopupRedirectResolver } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
     import {
       initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
       collection, doc, getDoc, setDoc, deleteDoc, getDocs, onSnapshot, writeBatch
@@ -27,7 +27,26 @@ const firebaseConfig = {
     };
 
     const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
+
+    // initializeAuth + popupRedirectResolver is required for reliable Google login
+    // when the app is hosted OUTSIDE Firebase Hosting (e.g. GitHub Pages).
+    // signInWithRedirect is broken on GH Pages because browsers block third-party
+    // storage between uburiram.github.io and *.firebaseapp.com.
+    let auth;
+    try {
+      auth = initializeAuth(app, {
+        persistence: indexedDBLocalPersistence,
+        popupRedirectResolver: browserPopupRedirectResolver
+      });
+    } catch (e) {
+      // Already initialized (HMR / double load)
+      auth = getAuth(app);
+      try {
+        await setPersistence(auth, indexedDBLocalPersistence);
+      } catch (e2) {
+        try { await setPersistence(auth, browserLocalPersistence); } catch (e3) { /* */ }
+      }
+    }
     window.auth = auth;
 
     // Firestore offline persistence (IndexedDB)
@@ -45,7 +64,6 @@ const firebaseConfig = {
     }
     window.db = db;
     window._firestoreOfflineEnabled = true;
-    // Expose Firestore helpers for non-module scripts
     window.collection = collection;
     window.doc = doc;
     window.getDoc = getDoc;
@@ -65,85 +83,86 @@ const firebaseConfig = {
     window.unsubSettings = null;
     let pendingGuestData = null;
 
-    // ---- Auth bootstrap (critical for redirect login on mobile / GitHub Pages) ----
-    // Persistence MUST be set BEFORE getRedirectResult, otherwise session is dropped
-    // and the user lands back as guest after choosing a Google account.
-    async function ensureAuthPersistence() {
-      try {
-        await setPersistence(auth, indexedDBLocalPersistence);
-      } catch (e1) {
-        console.warn('indexedDBLocalPersistence failed, fallback browserLocal', e1);
-        try {
-          await setPersistence(auth, browserLocalPersistence);
-        } catch (e2) {
-          console.warn('browserLocalPersistence failed', e2);
-        }
-      }
-    }
-
-    await ensureAuthPersistence();
-
-    // Complete redirect sign-in if returning from Google
+    // Best-effort: complete any leftover redirect (usually null on GH Pages)
     try {
       if (auth.authStateReady) await auth.authStateReady();
       const redirectResult = await getRedirectResult(auth);
       if (redirectResult && redirectResult.user) {
-        console.info('[auth] redirect login ok', redirectResult.user.email);
+        console.info('[auth] redirect result', redirectResult.user.email);
         if (typeof window.showToast === 'function') {
           window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + (redirectResult.user.displayName || redirectResult.user.email));
         }
       }
     } catch (error) {
-      if (error && error.code !== 'auth/missing-initial-state') {
+      if (error && error.code && error.code !== 'auth/missing-initial-state') {
         console.error('Redirect Auth Error:', error);
-        if (typeof window.showToast === 'function') {
-          window.showToast('เข้าสู่ระบบไม่สำเร็จ: ' + (error.code || error.message), 'error');
-        }
       }
     }
 
+    /**
+     * Google login — POPUP first (works on GitHub Pages).
+     * Redirect is last resort only; often fails on GH Pages due to 3rd-party storage.
+     */
     window.loginGoogle = async function() {
       try {
-        await ensureAuthPersistence();
-        const ua = navigator.userAgent || '';
-        const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
-        const isWebView = /(iPhone|iPod|iPad).*AppleWebKit(?!.*Safari)/i.test(ua) ||
-          /; wv\)/i.test(ua) || /FBAN|FBAV|Line\//i.test(ua);
-
-        // Mobile / WebView: redirect only (popup is unreliable)
-        if (isMobile || isWebView) {
-          if (typeof window.showToast === 'function') {
-            window.showToast('กำลังไปหน้าเข้าสู่ระบบ Google...');
-          }
-          await signInWithRedirect(auth, googleProvider);
-          return;
+        if (typeof window.showToast === 'function') {
+          window.showToast('กำลังเปิดหน้าต่างเข้าสู่ระบบ Google...');
         }
 
-        try {
-          const result = await signInWithPopup(auth, googleProvider);
+        const result = await signInWithPopup(auth, googleProvider);
+        if (result && result.user) {
+          // onAuthStateChanged will update UI; toast here for feedback
           if (typeof window.showToast === 'function') {
             window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + (result.user.displayName || result.user.email));
           }
-        } catch (popupError) {
-          const code = popupError && popupError.code;
-          if (code === 'auth/popup-closed-by-user') return;
-          // Any popup failure → redirect fallback
-          console.warn('popup failed, fallback redirect', code, popupError);
-          if (typeof window.showToast === 'function') {
-            window.showToast('กำลังเปิดหน้าเข้าสู่ระบบ...');
-          }
-          await signInWithRedirect(auth, googleProvider);
+          // Force UI if onAuthStateChanged is slow
+          window.currentUser = result.user;
+          try {
+            const nameElem = document.getElementById('userName');
+            const btnLogin = document.getElementById('btnLoginGoogle');
+            const btnLogout = document.getElementById('btnLogoutGoogle');
+            const statusElem = document.getElementById('userSyncText');
+            const avatar = document.getElementById('userAvatar');
+            if (nameElem) nameElem.innerText = result.user.displayName || result.user.email || 'ผู้ใช้ Google';
+            if (btnLogin) btnLogin.classList.add('hidden');
+            if (btnLogout) btnLogout.classList.remove('hidden');
+            if (statusElem) statusElem.innerText = 'เชื่อมต่อ Google แล้ว — พร้อมซิงค์ Cloud';
+            if (avatar && result.user.photoURL) avatar.src = result.user.photoURL;
+          } catch (uiErr) { console.warn(uiErr); }
+          return;
         }
-      } catch (error) {
-        console.error('Login failed:', error);
-        try {
+      } catch (popupError) {
+        const code = popupError && popupError.code;
+        console.warn('[auth] popup failed', code, popupError);
+
+        if (code === 'auth/popup-closed-by-user') {
           if (typeof window.showToast === 'function') {
-            window.showToast('กำลังเปลี่ยนวิธีเข้าสู่ระบบ...');
+            window.showToast('ปิดหน้าต่างเข้าสู่ระบบแล้ว', 'error');
           }
-          await signInWithRedirect(auth, googleProvider);
-        } catch (e2) {
-          alert('เกิดข้อผิดพลาดในการลงชื่อเข้าใช้: ' + (error && error.message ? error.message : error));
+          return;
         }
+
+        if (code === 'auth/popup-blocked') {
+          alert(
+            'เบราว์เซอร์บล็อกหน้าต่างป๊อปอัป\n\n' +
+            'วิธีแก้:\n' +
+            '1) กดไอคอนป๊อปอัปในแถบที่อยู่ แล้ว "อนุญาต"\n' +
+            '2) หรือเปิดเว็บใน Chrome/Safari (ไม่ใช่ในแอป LINE/Facebook)\n' +
+            'แล้วกดเข้าสู่ระบบอีกครั้ง'
+          );
+          return;
+        }
+
+        // internal-error / network / other — explain clearly (redirect usually also fails on GH Pages)
+        const msg = (popupError && popupError.message) ? popupError.message : String(popupError);
+        alert(
+          'เข้าสู่ระบบไม่สำเร็จ (' + (code || 'unknown') + ')\n\n' +
+          msg + '\n\n' +
+          'แนะนำ:\n' +
+          '• เปิดเว็บใน Chrome หรือ Safari โดยตรง (ไม่เปิดผ่าน LINE)\n' +
+          '• อนุญาตป๊อปอัปสำหรับ uburiram.github.io\n' +
+          '• ตรวจว่าใน Firebase Console → Authentication → Authorized domains มี uburiram.github.io'
+        );
       }
     };
 
