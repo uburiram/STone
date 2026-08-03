@@ -3,7 +3,7 @@
  * Depends on: SomtumStore (js/storage.js), window.appData helpers (js/app.js)
  */
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence, indexedDBLocalPersistence, browserPopupRedirectResolver } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
     import {
       initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
       collection, doc, getDoc, setDoc, deleteDoc, getDocs, onSnapshot, writeBatch
@@ -28,6 +28,8 @@ const firebaseConfig = {
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
+    window.auth = auth;
+
     // Firestore offline persistence (IndexedDB)
     let db;
     try {
@@ -37,7 +39,6 @@ const firebaseConfig = {
         })
       });
     } catch (e) {
-      // Fallback if already initialized or unsupported
       console.warn('persistentLocalCache unavailable, fallback getFirestore-compatible init', e);
       const { getFirestore } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
       db = getFirestore(app);
@@ -56,60 +57,92 @@ const firebaseConfig = {
 
     const googleProvider = new GoogleAuthProvider();
     googleProvider.setCustomParameters({ prompt: 'select_account' });
+    googleProvider.addScope('profile');
+    googleProvider.addScope('email');
 
     window.currentUser = null;
     window.unsubTransactions = null;
     window.unsubSettings = null;
     let pendingGuestData = null;
 
-    getRedirectResult(auth).then((result) => {
-      if (result && result.user) {
-        window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + result.user.displayName);
+    // ---- Auth bootstrap (critical for redirect login on mobile / GitHub Pages) ----
+    // Persistence MUST be set BEFORE getRedirectResult, otherwise session is dropped
+    // and the user lands back as guest after choosing a Google account.
+    async function ensureAuthPersistence() {
+      try {
+        await setPersistence(auth, indexedDBLocalPersistence);
+      } catch (e1) {
+        console.warn('indexedDBLocalPersistence failed, fallback browserLocal', e1);
+        try {
+          await setPersistence(auth, browserLocalPersistence);
+        } catch (e2) {
+          console.warn('browserLocalPersistence failed', e2);
+        }
       }
-    }).catch((error) => {
-      if (error.code !== 'auth/missing-initial-state') {
-        console.error("Redirect Auth Error:", error);
+    }
+
+    await ensureAuthPersistence();
+
+    // Complete redirect sign-in if returning from Google
+    try {
+      if (auth.authStateReady) await auth.authStateReady();
+      const redirectResult = await getRedirectResult(auth);
+      if (redirectResult && redirectResult.user) {
+        console.info('[auth] redirect login ok', redirectResult.user.email);
+        if (typeof window.showToast === 'function') {
+          window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + (redirectResult.user.displayName || redirectResult.user.email));
+        }
       }
-    });
+    } catch (error) {
+      if (error && error.code !== 'auth/missing-initial-state') {
+        console.error('Redirect Auth Error:', error);
+        if (typeof window.showToast === 'function') {
+          window.showToast('เข้าสู่ระบบไม่สำเร็จ: ' + (error.code || error.message), 'error');
+        }
+      }
+    }
 
     window.loginGoogle = async function() {
       try {
-        await setPersistence(auth, browserLocalPersistence);
+        await ensureAuthPersistence();
         const ua = navigator.userAgent || '';
-        // Mobile browsers / in-app WebViews often break popup → use redirect
         const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
         const isWebView = /(iPhone|iPod|iPad).*AppleWebKit(?!.*Safari)/i.test(ua) ||
           /; wv\)/i.test(ua) || /FBAN|FBAV|Line\//i.test(ua);
+
+        // Mobile / WebView: redirect only (popup is unreliable)
         if (isMobile || isWebView) {
+          if (typeof window.showToast === 'function') {
+            window.showToast('กำลังไปหน้าเข้าสู่ระบบ Google...');
+          }
           await signInWithRedirect(auth, googleProvider);
           return;
         }
+
         try {
           const result = await signInWithPopup(auth, googleProvider);
-          window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + result.user.displayName);
+          if (typeof window.showToast === 'function') {
+            window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + (result.user.displayName || result.user.email));
+          }
         } catch (popupError) {
           const code = popupError && popupError.code;
-          // popup-blocked, internal-error, cancelled → fall back to redirect
-          if (code === 'auth/popup-blocked' ||
-              code === 'auth/internal-error' ||
-              code === 'auth/cancelled-popup-request' ||
-              code === 'auth/popup-closed-by-user') {
-            if (code !== 'auth/popup-closed-by-user') {
-              window.showToast('กำลังเปิดหน้าเข้าสู่ระบบ...', 'success');
-              await signInWithRedirect(auth, googleProvider);
-            }
-            return;
+          if (code === 'auth/popup-closed-by-user') return;
+          // Any popup failure → redirect fallback
+          console.warn('popup failed, fallback redirect', code, popupError);
+          if (typeof window.showToast === 'function') {
+            window.showToast('กำลังเปิดหน้าเข้าสู่ระบบ...');
           }
-          throw popupError;
+          await signInWithRedirect(auth, googleProvider);
         }
       } catch (error) {
-        console.error("Login failed:", error);
-        // Last resort: redirect (fixes many auth/internal-error cases on mobile)
+        console.error('Login failed:', error);
         try {
-          window.showToast('กำลังเปลี่ยนวิธีเข้าสู่ระบบ...', 'success');
+          if (typeof window.showToast === 'function') {
+            window.showToast('กำลังเปลี่ยนวิธีเข้าสู่ระบบ...');
+          }
           await signInWithRedirect(auth, googleProvider);
         } catch (e2) {
-          alert('เกิดข้อผิดพลาดในการลงชื่อเข้าใช้: ' + (error.message || error));
+          alert('เกิดข้อผิดพลาดในการลงชื่อเข้าใช้: ' + (error && error.message ? error.message : error));
         }
       }
     };
@@ -157,7 +190,9 @@ const firebaseConfig = {
 
       if (user) {
         avatar.src = user.photoURL || 'https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png';
-        nameElem.innerText = user.displayName || user.email;
+        nameElem.innerText = user.displayName || user.email || 'ผู้ใช้ Google';
+        if (statusElem) statusElem.innerText = 'เชื่อมต่อ Google แล้ว — พร้อมซิงค์ Cloud';
+        if (badge) badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-emerald-500 border-2 border-white dark:border-gray-800 rounded-full';
         btnLogin.classList.add('hidden');
         btnLogout.classList.remove('hidden');
 
