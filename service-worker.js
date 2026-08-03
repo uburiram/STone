@@ -1,5 +1,5 @@
 /* Somtum Service Worker - network-first for app files (auth-safe) */
-const CACHE_NAME = 'somtum-v12';
+const CACHE_NAME = 'somtum-v13';
 const CORE_ASSETS = [
   './',
   './index.html',
