@@ -2002,36 +2002,138 @@
       document.getElementById('monthlyReportModal').classList.remove('hidden');
     };
 
-    // ----- Daily slip (large print) -----
+    // ----- Daily slip (fullscreen on-screen + print) -----
     window.printDailySlip = function() {
-      const today = getLocalYYYYMMDD();
+      const today = (typeof getLocalYYYYMMDD === 'function')
+        ? getLocalYYYYMMDD()
+        : window.getLocalYYYYMMDD();
       const txs = (window.appData.transactions || []).filter(t => t.date === today);
       let inc = 0, exp = 0;
       txs.forEach(t => t.type === 'income' ? inc += Number(t.amount) : exp += Number(t.amount));
       const net = inc - exp;
-      const w = window.open('', '_blank', 'width=400,height=600');
-      if (!w) { alert('กรุณาอนุญาตป๊อปอัปเพื่อพิมพ์'); return; }
-      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>สรุปยอดวันนี้</title>
-        <style>
-          body{font-family:sans-serif;padding:24px;text-align:center;color:#111}
-          h1{font-size:22px;margin:0 0 8px}
-          .date{font-size:14px;color:#555;margin-bottom:20px}
-          .row{font-size:28px;font-weight:800;margin:12px 0}
-          .inc{color:#047857}.exp{color:#be123c}.net{color:#c2410c;font-size:32px}
-          .line{border-top:2px dashed #ccc;margin:16px 0}
-          .meta{font-size:12px;color:#666;margin-top:24px}
-          @media print{button{display:none}}
-        </style></head><body>
-        <h1>ส้มตำนายหนึ่ง</h1>
-        <div class="date">สรุปยอดวันที่ ${today}</div>
-        <div class="row inc">รายรับ ฿${inc.toLocaleString('th-TH',{minimumFractionDigits:2})}</div>
-        <div class="row exp">รายจ่าย ฿${exp.toLocaleString('th-TH',{minimumFractionDigits:2})}</div>
-        <div class="line"></div>
-        <div class="row net">สุทธิ ฿${net.toLocaleString('th-TH',{minimumFractionDigits:2})}</div>
-        <div class="meta">${txs.length} รายการ · พิมพ์เมื่อ ${new Date().toLocaleString('th-TH')}</div>
-        <p><button onclick="window.print()" style="margin-top:20px;padding:10px 20px;font-size:16px">พิมพ์</button></p>
-        </body></html>`);
-      w.document.close();
+
+      // Percentages
+      const marginPct = inc > 0 ? (net / inc) * 100 : 0;           // กำไรต่อรายรับ
+      const expOfIncPct = inc > 0 ? (exp / inc) * 100 : (exp > 0 ? 100 : 0); // รายจ่ายต่อรายรับ
+      const profitOfExpPct = exp > 0 ? (net / exp) * 100 : null;   // กำไรต่อต้นทุน
+
+      const fmt = (n) => Number(n).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const fmtPct = (n) => (n === null || !isFinite(n)) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+      const netColor = net >= 0 ? '#047857' : '#be123c';
+      const marginColor = marginPct >= 0 ? '#047857' : '#be123c';
+
+      // Thai date label
+      let dateLabel = today;
+      try {
+        const parts = today.split('-');
+        if (parts.length === 3) {
+          const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+          dateLabel = d.toLocaleDateString('th-TH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        }
+      } catch (e) { /* keep ISO */ }
+
+      // Remove previous overlay if any
+      const old = document.getElementById('dailySlipOverlay');
+      if (old) old.remove();
+
+      const overlay = document.createElement('div');
+      overlay.id = 'dailySlipOverlay';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.innerHTML = `
+<div class="ds-backdrop">
+  <div class="ds-sheet">
+    <div class="ds-header">
+      <div class="ds-title">ใบสรุปยอดวันนี้</div>
+      <button type="button" class="ds-close" aria-label="ปิด">&times;</button>
+    </div>
+    <div class="ds-body" id="dailySlipPrintArea">
+      <div class="ds-brand">ส้มตำนายหนึ่ง</div>
+      <div class="ds-date">${dateLabel}</div>
+      <div class="ds-card ds-inc">
+        <div class="ds-label">รายรับ</div>
+        <div class="ds-amt">฿${fmt(inc)}</div>
+      </div>
+      <div class="ds-card ds-exp">
+        <div class="ds-label">รายจ่าย <span class="ds-pct-inline">${fmtPct(expOfIncPct)} ของรายรับ</span></div>
+        <div class="ds-amt">฿${fmt(exp)}</div>
+      </div>
+      <div class="ds-card ds-net" style="border-color:${netColor}">
+        <div class="ds-label">สุทธิ (กำไร/ขาดทุน)</div>
+        <div class="ds-amt" style="color:${netColor}">฿${fmt(net)}</div>
+        <div class="ds-pct" style="color:${marginColor}">อัตรากำไร ${fmtPct(marginPct)} ของรายรับ</div>
+        <div class="ds-pct-sub">${profitOfExpPct === null ? 'ยังไม่มีรายจ่ายเพื่อเทียบต้นทุน' : ('กำไรต่อต้นทุน ' + fmtPct(profitOfExpPct))}</div>
+      </div>
+      <div class="ds-meta">${txs.length} รายการ · อัปเดต ${new Date().toLocaleString('th-TH')}</div>
+    </div>
+    <div class="ds-actions">
+      <button type="button" class="ds-btn ds-btn-print">พิมพ์ / บันทึกเป็น PDF</button>
+      <button type="button" class="ds-btn ds-btn-close2">ปิด</button>
+    </div>
+  </div>
+</div>`;
+
+      const style = document.createElement('style');
+      style.id = 'dailySlipStyle';
+      style.textContent = `
+#dailySlipOverlay{position:fixed;inset:0;z-index:120;font-family:'Prompt',system-ui,sans-serif}
+#dailySlipOverlay .ds-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:stretch;justify-content:center;padding:0}
+#dailySlipOverlay .ds-sheet{background:#fff;width:100%;max-width:480px;height:100%;max-height:100dvh;display:flex;flex-direction:column;box-shadow:0 0 40px rgba(0,0,0,.25)}
+@media(min-width:520px){
+  #dailySlipOverlay .ds-backdrop{align-items:center;padding:16px}
+  #dailySlipOverlay .ds-sheet{height:auto;max-height:min(92dvh,720px);border-radius:24px;overflow:hidden}
+}
+#dailySlipOverlay .ds-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #eee;flex-shrink:0;background:linear-gradient(90deg,#ea580c,#f59e0b);color:#fff}
+#dailySlipOverlay .ds-title{font-weight:700;font-size:clamp(15px,4.2vw,17px)}
+#dailySlipOverlay .ds-close{background:transparent;border:0;color:#fff;font-size:28px;line-height:1;cursor:pointer;padding:0 6px}
+#dailySlipOverlay .ds-body{flex:1;overflow:auto;padding:clamp(16px,4vw,24px);text-align:center;-webkit-overflow-scrolling:touch}
+#dailySlipOverlay .ds-brand{font-size:clamp(22px,6.5vw,28px);font-weight:800;color:#111;margin:4px 0 6px}
+#dailySlipOverlay .ds-date{font-size:clamp(13px,3.6vw,15px);color:#555;margin-bottom:clamp(14px,3vw,20px)}
+#dailySlipOverlay .ds-card{border:2px solid #e5e7eb;border-radius:16px;padding:clamp(12px,3.5vw,18px);margin:0 0 12px;background:#fafafa}
+#dailySlipOverlay .ds-inc{border-color:#a7f3d0;background:#ecfdf5}
+#dailySlipOverlay .ds-exp{border-color:#fecdd3;background:#fff1f2}
+#dailySlipOverlay .ds-net{background:#fff7ed}
+#dailySlipOverlay .ds-label{font-size:clamp(13px,3.5vw,15px);font-weight:600;color:#374151;margin-bottom:4px}
+#dailySlipOverlay .ds-pct-inline{font-weight:700;color:#be123c;font-size:clamp(12px,3.2vw,14px)}
+#dailySlipOverlay .ds-amt{font-size:clamp(28px,9vw,40px);font-weight:800;letter-spacing:-0.02em;line-height:1.15;font-variant-numeric:tabular-nums}
+#dailySlipOverlay .ds-inc .ds-amt{color:#047857}
+#dailySlipOverlay .ds-exp .ds-amt{color:#be123c}
+#dailySlipOverlay .ds-pct{font-size:clamp(16px,4.5vw,20px);font-weight:700;margin-top:8px}
+#dailySlipOverlay .ds-pct-sub{font-size:clamp(13px,3.5vw,15px);color:#6b7280;margin-top:4px;font-weight:600}
+#dailySlipOverlay .ds-meta{font-size:clamp(12px,3.2vw,13px);color:#6b7280;margin-top:8px}
+#dailySlipOverlay .ds-actions{display:flex;gap:10px;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0));border-top:1px solid #eee;flex-shrink:0;background:#fff}
+#dailySlipOverlay .ds-btn{flex:1;padding:14px 12px;border-radius:14px;font-size:clamp(14px,3.8vw,16px);font-weight:700;border:0;cursor:pointer;font-family:inherit}
+#dailySlipOverlay .ds-btn-print{background:#ea580c;color:#fff}
+#dailySlipOverlay .ds-btn-close2{background:#f3f4f6;color:#374151}
+@media print{
+  body > *:not(#dailySlipOverlay){display:none!important}
+  #dailySlipOverlay{position:static}
+  #dailySlipOverlay .ds-backdrop{background:#fff;padding:0}
+  #dailySlipOverlay .ds-sheet{box-shadow:none;max-width:100%;height:auto;max-height:none;border-radius:0}
+  #dailySlipOverlay .ds-header,#dailySlipOverlay .ds-actions,#dailySlipOverlay .ds-close{display:none!important}
+  #dailySlipOverlay .ds-body{padding:12mm}
+  #dailySlipOverlay .ds-amt{font-size:28pt}
+}
+`;
+      // replace previous style
+      const oldStyle = document.getElementById('dailySlipStyle');
+      if (oldStyle) oldStyle.remove();
+      document.head.appendChild(style);
+      document.body.appendChild(overlay);
+      document.body.style.overflow = 'hidden';
+
+      const close = () => {
+        overlay.remove();
+        document.body.style.overflow = '';
+      };
+      overlay.querySelector('.ds-close').addEventListener('click', close);
+      overlay.querySelector('.ds-btn-close2').addEventListener('click', close);
+      overlay.querySelector('.ds-backdrop').addEventListener('click', (e) => {
+        if (e.target === overlay.querySelector('.ds-backdrop')) close();
+      });
+      overlay.querySelector('.ds-btn-print').addEventListener('click', () => {
+        window.print();
+      });
     };
 
     // ----- Weekly backup reminder -----
