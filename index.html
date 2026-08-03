@@ -49,10 +49,10 @@
 <body class="bg-gray-50 dark:bg-gray-900 min-h-screen text-gray-800 dark:text-gray-100 pb-12">
 
   <!-- Loading Overlay -->
-  <div id="loadingOverlay" class="fixed inset-0 bg-white/90 z-[100] flex flex-col items-center justify-center transition-opacity duration-300">
+  <div id="loadingOverlay" class="fixed inset-0 bg-white/90 dark:bg-gray-900/90 z-[100] flex flex-col items-center justify-center transition-opacity duration-300">
     <img src="https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png" class="w-16 h-16 animate-bounce mb-3 rounded-2xl shadow-md" alt="Somtum Logo">
     <i class="fa-solid fa-circle-notch fa-spin text-3xl text-brand-500 mb-2"></i>
-    <p class="text-gray-700 font-bold text-xs">กำลังโหลดข้อมูล ส้มตำนายหนึ่ง...</p>
+    <p class="text-gray-700 dark:text-gray-200 font-bold text-xs">กำลังโหลดข้อมูล ส้มตำนายหนึ่ง...</p>
   </div>
 
   <!-- Unsynced status bar (full width) -->
@@ -600,19 +600,19 @@
 
   <!-- Goal Logic Detail Modal -->
   <div id="goalDetailModal" class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center hidden p-0 sm:p-4">
-    <div class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-5 shadow-xl space-y-4">
-      <div class="flex justify-between items-center border-b pb-3">
-        <h3 class="font-bold text-sm text-gray-800"><i class="fa-solid fa-bullseye text-brand-500"></i> ตั้งเป้าหมาย & คำนวณ</h3>
-        <button onclick="document.getElementById('goalDetailModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 font-bold text-lg">&times;</button>
+    <div class="bg-white dark:bg-gray-800 w-full max-w-md rounded-t-3xl sm:rounded-3xl p-5 shadow-xl space-y-4">
+      <div class="flex justify-between items-center border-b border-gray-100 dark:border-gray-700 pb-3">
+        <h3 class="font-bold text-sm text-gray-800 dark:text-gray-100"><i class="fa-solid fa-bullseye text-brand-500"></i> ตั้งเป้าหมาย & คำนวณ</h3>
+        <button onclick="document.getElementById('goalDetailModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 font-bold text-lg">&times;</button>
       </div>
-      <div class="text-xs space-y-2.5 text-gray-600">
+      <div class="text-xs space-y-2.5 text-gray-600 dark:text-gray-300">
         <p>เป้าหมายตั้งต้นจะคำนวณจาก (รายจ่ายรวม + 60%) อัตโนมัติ แต่คุณสามารถกำหนดเป้าหมายเองได้</p>
         <div class="flex gap-2">
-          <input type="number" id="customGoalInput" placeholder="ตั้งเป้าหมายเอง (เช่น 5000)" class="flex-1 border border-gray-300 rounded-xl px-3 py-2 focus:outline-none">
+          <input type="number" id="customGoalInput" placeholder="ตั้งเป้าหมายเอง (เช่น 5000)" class="flex-1 border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-2 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none">
           <button onclick="saveCustomGoal()" class="bg-brand-600 text-white px-3 py-2 rounded-xl">บันทึก</button>
-          <button onclick="clearCustomGoal()" class="bg-gray-200 text-gray-700 px-3 py-2 rounded-xl">ใช้สูตร</button>
+          <button onclick="clearCustomGoal()" class="bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-100 px-3 py-2 rounded-xl">ใช้สูตร</button>
         </div>
-        <div id="goalCalculationBreakdown" class="p-3 bg-gray-50 rounded-xl border space-y-1 mt-3"></div>
+        <div id="goalCalculationBreakdown" class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-600 space-y-1 mt-3"></div>
       </div>
     </div>
   </div>
@@ -759,8 +759,27 @@
         btnLogin.classList.add('hidden');
         btnLogout.classList.remove('hidden');
 
+        // Safety: classic script may not have finished early-load yet if module
+        // ran first. Re-hydrate from localStorage before guest-merge decision.
+        try {
+          const raw = localStorage.getItem('somtumAppData');
+          if (raw && typeof window.sanitizeAppData === 'function') {
+            const parsed = window.sanitizeAppData(JSON.parse(raw));
+            const memLen = (window.appData && window.appData.transactions) ? window.appData.transactions.length : 0;
+            const diskLen = (parsed.transactions || []).length;
+            // Prefer the larger / more complete dataset to avoid wiping local work
+            if (diskLen > memLen) {
+              window.appData = parsed;
+            } else if (!window.appData || !Array.isArray(window.appData.transactions)) {
+              window.appData = parsed;
+            }
+          }
+        } catch (e) {
+          console.warn('Auth hydrate from localStorage failed:', e);
+        }
+
         const lastOwnerUid = localStorage.getItem('somtumDataOwnerUid');
-        const localTransactions = window.appData.transactions || [];
+        const localTransactions = (window.appData && window.appData.transactions) || [];
 
         if (lastOwnerUid === user.uid) {
           window.initFirestoreListeners();
@@ -1266,6 +1285,23 @@
       return data;
     };
 
+    // CRITICAL: Load localStorage immediately (not in onload).
+    // Module script (Firebase Auth) is deferred and may restore session + decide
+    // guest-merge using window.appData BEFORE window.onload runs. Loading late
+    // caused empty default appData to be treated as "no guest data" → data loss.
+    (function loadLocalDataEarly() {
+      try {
+        const savedData = localStorage.getItem('somtumAppData');
+        if (savedData) {
+          window.appData = window.sanitizeAppData(JSON.parse(savedData));
+        } else {
+          window.appData = window.sanitizeAppData(window.appData);
+        }
+      } catch (e) {
+        console.error('Early load local data failed:', e);
+        window.appData = window.sanitizeAppData({});
+      }
+    })();
 
     window.getLocalYYYYMMDD = function(dateObj = new Date()) {
       const y = dateObj.getFullYear();
@@ -1395,42 +1431,43 @@
 
     window.onload = function() {
       createDynamicManifest();
-      const savedData = localStorage.getItem('somtumAppData');
-      if (savedData) {
+      // Data already loaded early (see loadLocalDataEarly). Re-apply only if
+      // something wiped appData in the meantime (should be rare).
+      if (!window.appData || !Array.isArray(window.appData.transactions)) {
         try {
-          window.appData = window.sanitizeAppData(JSON.parse(savedData));
-        } catch(e) {
-          console.error("Load local data failed:", e);
+          const savedData = localStorage.getItem('somtumAppData');
+          window.appData = window.sanitizeAppData(savedData ? JSON.parse(savedData) : {});
+        } catch (e) {
+          console.error('Load local data failed:', e);
           window.appData = window.sanitizeAppData({});
         }
-      } else {
-        window.appData = window.sanitizeAppData(window.appData);
       }
       document.getElementById('selectedDate').value = selectedCustomDate;
       document.getElementById('startDate').value = selectedStartDate;
       document.getElementById('endDate').value = selectedEndDate;
-      setTimeFilter('all');
+      window.setTimeFilter('all');
       window.finishLoading();
 
       if (localStorage.getItem('somtumHasUnsyncedData') === 'true') {
         setTimeout(() => {
-          document.getElementById('syncPromptModal').classList.remove('hidden');
+          const m = document.getElementById('syncPromptModal');
+          if (m) m.classList.remove('hidden');
         }, 1000);
       }
     };
 
-    function setTimeFilter(filter) {
+    window.setTimeFilter = function(filter) {
       currentFilter = filter;
       historyDisplayLimit = 50;
       reportDisplayLimit = 50;
       document.querySelectorAll('.filter-btn').forEach(btn => {
         btn.classList.remove('bg-brand-600', 'text-white', 'shadow-sm');
-        btn.classList.add('text-gray-600');
+        btn.classList.add('text-gray-600', 'dark:text-gray-300');
       });
       const activeBtn = document.getElementById(`filter-${filter}`);
       if (activeBtn) {
         activeBtn.classList.add('bg-brand-600', 'text-white', 'shadow-sm');
-        activeBtn.classList.remove('text-gray-600');
+        activeBtn.classList.remove('text-gray-600', 'dark:text-gray-300');
       }
 
       const singleContainer = document.getElementById('singleDateContainer');
@@ -1793,7 +1830,7 @@
       }
     }
 
-    function openTransactionModal(type, editId = null) {
+    window.openTransactionModal = function(type, editId = null) {
       document.getElementById('txType').value = type;
       document.getElementById('editTxId').value = editId || '';
 
@@ -1890,9 +1927,9 @@
       }
     }
 
-    function closeTransactionModal() {
+    window.closeTransactionModal = function() {
       document.getElementById('transactionModal').classList.add('hidden');
-    }
+    };
 
     window.handleFormSubmit = async function(e) {
       e.preventDefault();
