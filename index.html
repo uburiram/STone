@@ -191,9 +191,9 @@
       <div class="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
         <div class="flex justify-between items-center mb-3">
           <div class="flex items-center gap-2">
-            <button onclick="changeCalendarMonth(-1)" class="w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center text-xs"><i class="fa-solid fa-chevron-left"></i></button>
-            <h3 id="calendarMonthYear" class="text-xs font-bold text-gray-700 uppercase tracking-wider">เดือน - ปี</h3>
-            <button onclick="changeCalendarMonth(1)" class="w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center text-xs"><i class="fa-solid fa-chevron-right"></i></button>
+            <button onclick="changeCalendarMonth(-1)" class="w-7 h-7 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 flex items-center justify-center text-xs"><i class="fa-solid fa-chevron-left"></i></button>
+            <h3 id="calendarMonthYear" class="text-xs font-bold text-gray-700 dark:text-gray-200 uppercase tracking-wider">เดือน - ปี</h3>
+            <button onclick="changeCalendarMonth(1)" class="w-7 h-7 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-300 flex items-center justify-center text-xs"><i class="fa-solid fa-chevron-right"></i></button>
           </div>
         </div>
         <div class="grid grid-cols-7 gap-1 text-center font-bold text-[10px] text-gray-400 mb-1">
@@ -1784,15 +1784,9 @@
         return listElem.innerHTML = `<div class="text-center py-6 text-gray-400 text-xs">ไม่พบรายการ</div>`;
       }
 
-      const limitedTx = txList.slice(0, historyDisplayLimit);
-      if (txList.length > historyDisplayLimit) {
-        document.getElementById('loadMoreHistoryContainer').classList.remove('hidden');
-      } else {
-        document.getElementById('loadMoreHistoryContainer').classList.add('hidden');
-      }
-
+      // Group by date first so day totals are never partial
       const dateGrouped = {};
-      limitedTx.forEach(tx => {
+      txList.forEach(tx => {
         const d = tx.date || 'ไม่ระบุวันที่';
         if (!dateGrouped[d]) dateGrouped[d] = { inc: 0, exp: 0, items: [] };
         if (tx.type === 'income') dateGrouped[d].inc += Number(tx.amount) || 0;
@@ -1801,21 +1795,34 @@
       });
 
       const sortedDates = Object.keys(dateGrouped).sort((a, b) => new Date(b) - new Date(a));
+      // Take complete days until we roughly reach the display limit
+      let shownCount = 0;
+      const visibleDates = [];
+      for (const d of sortedDates) {
+        if (shownCount >= historyDisplayLimit && visibleDates.length > 0) break;
+        visibleDates.push(d);
+        shownCount += dateGrouped[d].items.length;
+      }
+      if (visibleDates.length < sortedDates.length) {
+        document.getElementById('loadMoreHistoryContainer').classList.remove('hidden');
+      } else {
+        document.getElementById('loadMoreHistoryContainer').classList.add('hidden');
+      }
 
-      sortedDates.forEach((dStr, dIdx) => {
+      visibleDates.forEach((dStr, dIdx) => {
         const dayData = dateGrouped[dStr];
         const net = dayData.inc - dayData.exp;
         const containerId = `history-date-container-${dIdx}`;
         const bodyId = `history-date-body-${dIdx}`;
 
         const card = document.createElement('div');
-        card.className = "bg-white rounded-2xl border border-gray-200 shadow-2xs overflow-hidden my-2";
+        card.className = "bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xs overflow-hidden my-2";
         card.innerHTML = `
-          <div class="p-3 bg-gray-50/80 hover:bg-gray-100/80 cursor-pointer transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2" onclick="toggleSubDetail('${bodyId}')">
+          <div class="p-3 bg-gray-50/80 dark:bg-gray-700/50 hover:bg-gray-100/80 dark:hover:bg-gray-700 cursor-pointer transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2" onclick="toggleSubDetail('${bodyId}')">
             <div class="flex items-center gap-2">
               <i class="fa-solid fa-calendar-day text-brand-600"></i>
-              <span class="font-bold text-xs text-gray-800">วันที่ ${dStr}</span>
-              <span class="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full font-medium">${dayData.items.length} รายการ</span>
+              <span class="font-bold text-xs text-gray-800 dark:text-gray-100">วันที่ ${dStr}</span>
+              <span class="text-[10px] bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-200 px-2 py-0.5 rounded-full font-medium">${dayData.items.length} รายการ</span>
             </div>
             <div class="flex items-center gap-3 text-[11px]">
               <span class="text-emerald-600 font-semibold">+฿${dayData.inc.toLocaleString('th-TH', {minimumFractionDigits: 2})}</span>
@@ -1824,7 +1831,7 @@
               <i class="fa-solid fa-caret-down text-gray-400 ml-1 transition-transform" id="icon-${bodyId}"></i>
             </div>
           </div>
-          <div id="${bodyId}" class="hidden p-2 bg-white border-t border-gray-100">
+          <div id="${bodyId}" class="hidden p-2 bg-white dark:bg-gray-800 border-t border-gray-100 dark:border-gray-700">
             <div id="${containerId}"></div>
           </div>
         `;
@@ -1895,33 +1902,62 @@
           }
           window.showConfirmModal("ยืนยันการนำเข้าข้อมูล", "ข้อมูลใหม่จะถูกนำมาแทนที่ข้อมูลปัจจุบัน คุณต้องการดำเนินการต่อหรือไม่?", async () => {
             window.showToast("กำลังนำเข้าข้อมูล...");
-            window.appData = window.sanitizeAppData(parsed);
-            window.syncDataToCloud();
+            const newData = window.sanitizeAppData(parsed);
+            // Update local first
+            window.appData = newData;
+            try { window.saveLocalOnly(); } catch (e) {
+              window.showToast('บันทึกลงเครื่องล้มเหลว', 'error');
+              return;
+            }
 
-            if (window.currentUser) {
-              const txCollRef = window.collection(window.db, "users", window.currentUser.uid, "transactions");
-              const snap = await window.getDocs(txCollRef);
-              let batch = window.writeBatch(window.db);
-              let count = 0;
-              for (const d of snap.docs) {
-                batch.delete(d.ref);
-                count++;
-                if (count >= 400) { await batch.commit(); batch = window.writeBatch(window.db); count = 0; }
-              }
-              if (count > 0) await batch.commit();
+            if (window.currentUser && window.db) {
+              try {
+                // 1) Write settings first
+                const settingsRef = window.doc(window.db, "users", window.currentUser.uid, "meta", "settings");
+                await window.setDoc(settingsRef, {
+                  categories: newData.categories,
+                  materials: newData.materials,
+                  equipments: newData.equipments,
+                  customGoal: newData.customGoal,
+                  updatedAt: new Date().toISOString()
+                }, { merge: true });
 
-              batch = window.writeBatch(window.db);
-              count = 0;
-              for (const tx of window.appData.transactions) {
-                const txRef = window.doc(window.db, "users", window.currentUser.uid, "transactions", tx.id);
-                batch.set(txRef, tx);
-                count++;
-                if (count >= 400) { await batch.commit(); batch = window.writeBatch(window.db); count = 0; }
+                // 2) Write all new transactions first (safer than delete-first)
+                const newIds = new Set((newData.transactions || []).map(t => t.id));
+                let batch = window.writeBatch(window.db);
+                let count = 0;
+                for (const tx of (newData.transactions || [])) {
+                  const txRef = window.doc(window.db, "users", window.currentUser.uid, "transactions", tx.id);
+                  batch.set(txRef, tx);
+                  count++;
+                  if (count >= 400) { await batch.commit(); batch = window.writeBatch(window.db); count = 0; }
+                }
+                if (count > 0) await batch.commit();
+
+                // 3) Delete old transactions that are not in the new set
+                const txCollRef = window.collection(window.db, "users", window.currentUser.uid, "transactions");
+                const snap = await window.getDocs(txCollRef);
+                batch = window.writeBatch(window.db);
+                count = 0;
+                for (const d of snap.docs) {
+                  if (!newIds.has(d.id)) {
+                    batch.delete(d.ref);
+                    count++;
+                    if (count >= 400) { await batch.commit(); batch = window.writeBatch(window.db); count = 0; }
+                  }
+                }
+                if (count > 0) await batch.commit();
+
+                window.updateSyncUI(true);
+                window.showToast('นำเข้าข้อมูลสำเร็จ');
+              } catch (err) {
+                console.error("Import cloud error:", err);
+                window.showToast('นำเข้าในเครื่องสำเร็จ แต่ซิงค์ Cloud ล้มเหลว กรุณากดปุ่มซิงค์', 'error');
               }
-              if (count > 0) await batch.commit();
+            } else {
+              window.showToast('นำเข้าข้อมูลสำเร็จ (บันทึกในเครื่อง)');
             }
             window.refreshDashboard();
-            window.showToast('นำเข้าข้อมูลสำเร็จ');
           });
         } catch (err) {
           alert('เกิดข้อผิดพลาดในการอ่านไฟล์ JSON');
@@ -2061,22 +2097,22 @@
       (window.appData.categories[managerType] || []).forEach((cat, i) => {
         let subs = '';
         if(cat.subs && cat.subs.length > 0) {
-          subs = cat.subs.map((s, j) => `<span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[10px] inline-flex items-center gap-1 mb-1">${escapeHTML(s)} <button onclick="deleteSubCategory(${i}, ${j})" class="text-gray-400 hover:text-rose-500"><i class="fa-solid fa-xmark"></i></button></span>`).join(' ');
+          subs = cat.subs.map((s, j) => `<span class="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded text-[10px] inline-flex items-center gap-1 mb-1">${escapeHTML(s)} <button onclick="deleteSubCategory(${i}, ${j})" class="text-gray-400 hover:text-rose-500"><i class="fa-solid fa-xmark"></i></button></span>`).join(' ');
         }
         let badge = '';
         if(cat.flags?.isMaterialCategory) badge = `<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-medium">วัตถุดิบ</span>`;
         if(cat.flags?.isEquipmentCategory) badge = `<span class="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-medium">อุปกรณ์</span>`;
 
         list.innerHTML += `
-          <div class="bg-white border border-gray-200 rounded-xl p-3">
+          <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3">
             <div class="flex justify-between items-center mb-2">
-              <span class="font-bold text-xs text-gray-800 flex items-center gap-1.5"><i class="fa-solid fa-folder text-brand-500"></i> ${escapeHTML(cat.name)} ${badge}</span>
+              <span class="font-bold text-xs text-gray-800 dark:text-gray-100 flex items-center gap-1.5"><i class="fa-solid fa-folder text-brand-500"></i> ${escapeHTML(cat.name)} ${badge}</span>
               <button onclick="deleteMainCategory(${i})" class="text-gray-400 hover:text-rose-500 text-xs"><i class="fa-solid fa-trash"></i></button>
             </div>
             <div class="flex flex-wrap gap-1 mb-2">${subs || (cat.flags?.isMaterialCategory || cat.flags?.isEquipmentCategory ? '<span class="text-[10px] text-gray-400 italic">เลือกจากลิสต์วัตถุดิบ/อุปกรณ์อัตโนมัติ</span>' : '<span class="text-[10px] text-gray-400 italic">ไม่มีรายการย่อย</span>')}</div>
             <div class="flex gap-1.5">
-              <input type="text" id="newSub-${i}" placeholder="เพิ่มรายการย่อย..." class="flex-1 text-[11px] border border-gray-300 rounded-lg px-2.5 py-1.5 bg-gray-50 focus:outline-none">
-              <button onclick="addSubCategory(${i})" class="bg-gray-800 hover:bg-gray-900 text-white text-[11px] px-3 py-1.5 rounded-lg">+ เพิ่ม</button>
+              <input type="text" id="newSub-${i}" placeholder="เพิ่มรายการย่อย..." class="flex-1 text-[11px] border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none">
+              <button onclick="addSubCategory(${i})" class="bg-gray-800 dark:bg-gray-600 hover:bg-gray-900 dark:hover:bg-gray-500 text-white text-[11px] px-3 py-1.5 rounded-lg">+ เพิ่ม</button>
             </div>
           </div>`;
       });
