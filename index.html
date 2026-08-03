@@ -40,10 +40,29 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   
   <style>
-    body { font-family: 'Prompt', sans-serif; -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: 'Prompt', sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      font-size: 15px;
+      line-height: 1.55;
+      letter-spacing: 0.01em;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    /* ขยายตัวอักษร Tailwind ให้ใหญ่ขึ้น อ่านง่ายบนมือถือ */
+    .text-\[9px\]  { font-size: 0.7rem  !important; line-height: 1.4 !important; }
+    .text-\[10px\] { font-size: 0.75rem !important; line-height: 1.45 !important; }
+    .text-\[11px\] { font-size: 0.8125rem !important; line-height: 1.5 !important; }
+    .text-xs       { font-size: 0.875rem !important; line-height: 1.5 !important; }
+    .text-sm       { font-size: 0.9375rem !important; line-height: 1.55 !important; }
     .hide-scrollbar::-webkit-scrollbar { display: none; }
     .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     body, .bg-white, .bg-gray-50, .bg-gray-100 { transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease; }
+    /* ตัวเลข KPI อ่านชัดขึ้น */
+    #kpiTotalIncome, #kpiTotalExpense, #kpiNetProfit, #kpiTargetAmount {
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+    }
   </style>
 </head>
 <body class="bg-gray-50 dark:bg-gray-900 min-h-screen text-gray-800 dark:text-gray-100 pb-12">
@@ -365,16 +384,16 @@
   <!-- Custom Confirm Modal -->
   <div id="customConfirmModal" class="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center hidden p-4">
     <div class="bg-white dark:bg-gray-800 w-full max-w-sm rounded-3xl p-5 shadow-2xl space-y-4 text-center">
-      <div id="confirmModalIconContainer" class="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-xl">
+      <div id="confirmModalIconContainer" class="w-12 h-12 bg-amber-100 dark:bg-amber-900/30 text-amber-600 rounded-full flex items-center justify-center mx-auto text-xl">
         <i id="confirmModalIcon" class="fa-solid fa-triangle-exclamation"></i>
       </div>
       <div>
-        <h3 id="confirmModalTitle" class="font-bold text-base text-gray-800">ยืนยันการทำรายการ</h3>
-        <p id="confirmModalDesc" class="text-xs text-gray-500 mt-1">คุณต้องการดำเนินการนี้ใช่หรือไม่?</p>
+        <h3 id="confirmModalTitle" class="font-bold text-base sm:text-lg text-gray-800 dark:text-gray-100">ยืนยันการทำรายการ</h3>
+        <p id="confirmModalDesc" class="text-sm text-gray-600 dark:text-gray-300 mt-2 whitespace-pre-line leading-relaxed text-left">คุณต้องการดำเนินการนี้ใช่หรือไม่?</p>
       </div>
       <div class="flex gap-2 pt-2">
-        <button id="confirmModalBtnCancel" class="flex-1 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-600 hover:bg-gray-50">ยกเลิก</button>
-        <button id="confirmModalBtnOk" class="flex-1 py-2.5 rounded-xl bg-brand-600 text-white text-xs font-semibold hover:bg-brand-700 shadow-md">ยืนยัน</button>
+        <button id="confirmModalBtnCancel" class="flex-1 py-2.5 rounded-xl border border-gray-300 dark:border-gray-600 text-sm font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">ยกเลิก</button>
+        <button id="confirmModalBtnOk" class="flex-1 py-2.5 rounded-xl bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700 shadow-md">ยืนยัน</button>
       </div>
     </div>
   </div>
@@ -432,15 +451,15 @@
   <!-- Sync Prompt Modal -->
   <div id="syncPromptModal" class="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center hidden p-4">
     <div class="bg-white dark:bg-gray-800 w-full max-w-sm rounded-3xl p-5 shadow-2xl space-y-4 text-center">
-      <div class="w-12 h-12 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-xl">
+      <div class="w-12 h-12 bg-amber-100 dark:bg-amber-900/30 text-amber-600 rounded-full flex items-center justify-center mx-auto text-xl">
         <i class="fa-solid fa-cloud-arrow-up"></i>
       </div>
       <div>
-        <h3 class="font-bold text-base text-gray-800">พบข้อมูลยังไม่ถูกซิงค์</h3>
-        <p class="text-xs text-gray-500 mt-1">มีข้อมูลที่คุณบันทึกในเครื่องยังไม่ได้อัปโหลดไปยัง Google Account ต้องการกดซิงค์ข้อมูลเลยไหม?</p>
+        <h3 class="font-bold text-base text-gray-800 dark:text-gray-100">พบข้อมูลยังไม่ถูกซิงค์</h3>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">มีข้อมูลที่คุณบันทึกในเครื่องยังไม่ได้อัปโหลดไปยัง Google Account ต้องการกดซิงค์ข้อมูลเลยไหม?</p>
       </div>
       <div class="flex gap-2 pt-2">
-        <button onclick="window.confirmSyncData(false)" class="flex-1 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-600 hover:bg-gray-50">ไว้ทีหลัง</button>
+        <button onclick="window.confirmSyncData(false)" class="flex-1 py-2.5 rounded-xl border border-gray-300 dark:border-gray-600 text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">ไว้ทีหลัง</button>
         <button onclick="window.confirmSyncData(true)" class="flex-1 py-2.5 rounded-xl bg-brand-600 text-white text-xs font-semibold hover:bg-brand-700 shadow-md">ซิงค์ข้อมูลเลย</button>
       </div>
     </div>
@@ -1007,41 +1026,117 @@
       }
     };
 
-    window.checkAndSyncCloudData = async function(forcePrompt = false) {
-      if (!window.currentUser) return;
-      window.showToast('กำลังซิงค์ข้อมูล...');
-      try {
-        window.appData = window.sanitizeAppData(window.appData);
-        const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
-        const payload = JSON.parse(JSON.stringify({
-          categories: window.appData.categories,
-          materials: window.appData.materials || [],
-          equipments: window.appData.equipments || [],
-          customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
-          updatedAt: new Date().toISOString()
-        }));
-        await setDoc(settingsRef, payload, { merge: true });
+    /**
+     * Soft sync: อัปโหลด settings + รายการในเครื่อง (merge) โดยไม่ลบรายการบน Cloud
+     * ใช้ตอนออนไลน์กลับมา / auto flush
+     */
+    window._doSoftSyncToCloud = async function() {
+      if (!window.currentUser || !window.db) return;
+      window.appData = window.sanitizeAppData(window.appData);
+      const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
+      const payload = JSON.parse(JSON.stringify({
+        categories: window.appData.categories,
+        materials: window.appData.materials || [],
+        equipments: window.appData.equipments || [],
+        customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+        updatedAt: new Date().toISOString()
+      }));
+      await setDoc(settingsRef, payload, { merge: true });
 
-        // Use batch for transactions
+      let batch = writeBatch(db);
+      let count = 0;
+      for (const tx of (window.appData.transactions || [])) {
+        const txRef = doc(db, "users", window.currentUser.uid, "transactions", tx.id);
+        batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    };
+
+    /**
+     * Force sync: เครื่องนี้เป็นต้นทาง — อัปโหลดทั้งหมด แล้วลบรายการบน Cloud
+     * ที่ไม่มีในเครื่อง (รายการที่ถูกลบไปแล้ว)
+     */
+    window._doForceSyncWithPrune = async function() {
+      if (!window.currentUser || !window.db) return;
+      window.showToast('กำลังซิงค์แบบเครื่องนี้เป็นต้นทาง...');
+      try {
+        await window._doSoftSyncToCloud();
+
+        const localIds = new Set((window.appData.transactions || []).map(t => t.id));
+        const txCollRef = collection(db, "users", window.currentUser.uid, "transactions");
+        const snap = await getDocs(txCollRef);
         let batch = writeBatch(db);
         let count = 0;
-        for (const tx of (window.appData.transactions || [])) {
-          const txRef = doc(db, "users", window.currentUser.uid, "transactions", tx.id);
-          batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
-          count++;
-          if (count >= 400) {
-            await batch.commit();
-            batch = writeBatch(db);
-            count = 0;
+        let pruned = 0;
+        for (const d of snap.docs) {
+          if (!localIds.has(d.id)) {
+            batch.delete(d.ref);
+            count++;
+            pruned++;
+            if (count >= 400) {
+              await batch.commit();
+              batch = writeBatch(db);
+              count = 0;
+            }
           }
         }
         if (count > 0) await batch.commit();
 
         window.updateSyncUI(true);
         localStorage.removeItem('somtumHasUnsyncedData');
+        if (typeof window.updatePendingSyncButton === 'function') window.updatePendingSyncButton();
+        window.showToast(
+          pruned > 0
+            ? `ซิงค์สำเร็จ (ลบรายการบน Cloud ที่ไม่มีในเครื่อง ${pruned} รายการ)`
+            : 'ซิงค์สำเร็จ (ข้อมูลตรงกับเครื่องนี้แล้ว)'
+        );
+      } catch (e) {
+        console.error("Force sync error:", e);
+        window.showToast('ซิงค์ล้มเหลว: ' + (e.message || 'unknown'), 'error');
+      }
+    };
+
+    /**
+     * @param {boolean} forcePrompt
+     *  - true  = ปุ่ม "ซิงค์ตอนนี้" → ถามยืนยัน แล้ว force sync + prune
+     *  - false = auto (เน็ตกลับมา) → soft merge ไม่ลบ Cloud
+     */
+    window.checkAndSyncCloudData = async function(forcePrompt = false) {
+      if (!window.currentUser) {
+        window.showToast('กรุณาล็อกอินด้วย Google ก่อนซิงค์', 'error');
+        return;
+      }
+      if (!navigator.onLine) {
+        window.showToast('ออฟไลน์อยู่ — ข้อมูลถูกเก็บในเครื่องแล้ว จะซิงค์เมื่อเน็ตกลับมา', 'error');
+        return;
+      }
+
+      if (forcePrompt) {
+        const localCount = (window.appData.transactions || []).length;
+        window.showConfirmModal(
+          'ซิงค์แบบเครื่องนี้เป็นต้นทาง',
+          `ระบบจะอัปโหลดข้อมูลในเครื่องนี้ขึ้น Cloud ทั้งหมด (${localCount} รายการ) แล้วลบรายการบน Cloud ที่ไม่มีในเครื่องนี้\n\n⚠️ ถ้าใช้อีกเครื่องและยังไม่ได้ซิงค์มา ข้อมูลเครื่องอื่นอาจหาย\n\nต้องการดำเนินการต่อหรือไม่?`,
+          () => { window._doForceSyncWithPrune(); }
+        );
+        return;
+      }
+
+      // Soft auto-sync
+      window.showToast('กำลังซิงค์ข้อมูล...');
+      try {
+        await window._doSoftSyncToCloud();
+        window.updateSyncUI(true);
+        localStorage.removeItem('somtumHasUnsyncedData');
+        if (typeof window.updatePendingSyncButton === 'function') window.updatePendingSyncButton();
         window.showToast('ซิงค์ข้อมูลสำเร็จ');
       } catch (e) {
-        console.error("Sync error:", e);
+        console.error("Soft sync error:", e);
         window.showToast('ซิงค์ข้อมูลล้มเหลว: ' + (e.message || 'unknown'), 'error');
       }
     };
@@ -1049,6 +1144,7 @@
     window.confirmSyncData = function(shouldSync) {
       document.getElementById('syncPromptModal').classList.add('hidden');
       if (shouldSync) {
+        // จาก modal เตือนตอนเปิดแอป → ใช้ force sync + confirm ซ้ำอีกชั้นผ่าน checkAndSyncCloudData(true)
         window.checkAndSyncCloudData(true);
       }
     };
@@ -1492,42 +1588,52 @@
       window.refreshDashboard();
     }
 
-    function onCustomDateSelect() {
+    window.onCustomDateSelect = function() {
       selectedCustomDate = document.getElementById('selectedDate').value;
-      setTimeFilter('custom');
-    }
+      window.setTimeFilter('custom');
+    };
 
-    function onDateRangeSelect() {
+    window.onDateRangeSelect = function() {
       selectedStartDate = document.getElementById('startDate').value;
       selectedEndDate = document.getElementById('endDate').value;
       if (selectedStartDate && selectedEndDate) {
-        setTimeFilter('range');
+        // Swap UI values if user picked inverted range
+        if (selectedStartDate > selectedEndDate) {
+          const tmp = selectedStartDate;
+          selectedStartDate = selectedEndDate;
+          selectedEndDate = tmp;
+          document.getElementById('startDate').value = selectedStartDate;
+          document.getElementById('endDate').value = selectedEndDate;
+        }
+        window.setTimeFilter('range');
       }
-    }
+    };
 
-    window.getFilteredTransactions = function() {
+    // Time-range filter only (used by KPI / ratio / goals — must NOT be affected by
+    // history search / type / category / amount / note filters).
+    window.getTimeFilteredTransactions = function() {
       const txList = window.appData.transactions || [];
-      const searchQuery = (document.getElementById('searchTxInput') || {value:''}).value.toLowerCase();
-      const histType = (document.getElementById('histFilterType') || {value:'all'}).value;
-      const histCat = (document.getElementById('histFilterCategory') || {value:'all'}).value;
-      const minAmtRaw = (document.getElementById('histFilterMinAmt') || {value:''}).value;
-      const maxAmtRaw = (document.getElementById('histFilterMaxAmt') || {value:''}).value;
-      const hasNoteOnly = !!(document.getElementById('histFilterHasNote') || {}).checked;
-      const minAmt = minAmtRaw === '' ? null : Number(minAmtRaw);
-      const maxAmt = maxAmtRaw === '' ? null : Number(maxAmtRaw);
       const now = new Date();
+      // Normalize inverted custom range so start <= end
+      let rangeStart = selectedStartDate;
+      let rangeEnd = selectedEndDate;
+      if (currentFilter === 'range' && rangeStart && rangeEnd && rangeStart > rangeEnd) {
+        const tmp = rangeStart; rangeStart = rangeEnd; rangeEnd = tmp;
+      }
 
       return txList.filter(tx => {
         const txDate = parseLocalDate(tx.date);
-        let timeMatch = true;
-
         if (currentFilter === 'custom') {
-          timeMatch = (tx.date === selectedCustomDate);
-        } else if (currentFilter === 'range') {
-          timeMatch = (tx.date >= selectedStartDate && tx.date <= selectedEndDate);
-        } else if (currentFilter === 'daily') {
-          timeMatch = (tx.date === getLocalYYYYMMDD());
-        } else if (currentFilter === 'weekly') {
+          return tx.date === selectedCustomDate;
+        }
+        if (currentFilter === 'range') {
+          if (!rangeStart || !rangeEnd) return true;
+          return tx.date >= rangeStart && tx.date <= rangeEnd;
+        }
+        if (currentFilter === 'daily') {
+          return tx.date === getLocalYYYYMMDD();
+        }
+        if (currentFilter === 'weekly') {
           const day = now.getDay();
           const diff = day === 0 ? -6 : 1 - day;
           const startOfWeek = new Date(now);
@@ -1536,15 +1642,30 @@
           const endOfWeek = new Date(startOfWeek);
           endOfWeek.setDate(startOfWeek.getDate() + 6);
           endOfWeek.setHours(23, 59, 59, 999);
-          timeMatch = (txDate >= startOfWeek && txDate <= endOfWeek);
-        } else if (currentFilter === 'monthly') {
-          timeMatch = (txDate.getMonth() === now.getMonth() && txDate.getFullYear() === now.getFullYear());
-        } else if (currentFilter === 'yearly') {
-          timeMatch = (txDate.getFullYear() === now.getFullYear());
+          return txDate >= startOfWeek && txDate <= endOfWeek;
         }
+        if (currentFilter === 'monthly') {
+          return txDate.getMonth() === now.getMonth() && txDate.getFullYear() === now.getFullYear();
+        }
+        if (currentFilter === 'yearly') {
+          return txDate.getFullYear() === now.getFullYear();
+        }
+        return true; // 'all'
+      });
+    };
 
-        if (!timeMatch) return false;
+    // Full filter: time + history UI filters (search / type / category / amount / note)
+    window.getFilteredTransactions = function() {
+      const searchQuery = (document.getElementById('searchTxInput') || {value:''}).value.toLowerCase();
+      const histType = (document.getElementById('histFilterType') || {value:'all'}).value;
+      const histCat = (document.getElementById('histFilterCategory') || {value:'all'}).value;
+      const minAmtRaw = (document.getElementById('histFilterMinAmt') || {value:''}).value;
+      const maxAmtRaw = (document.getElementById('histFilterMaxAmt') || {value:''}).value;
+      const hasNoteOnly = !!(document.getElementById('histFilterHasNote') || {}).checked;
+      const minAmt = minAmtRaw === '' ? null : Number(minAmtRaw);
+      const maxAmt = maxAmtRaw === '' ? null : Number(maxAmtRaw);
 
+      return window.getTimeFilteredTransactions().filter(tx => {
         if (histType !== 'all' && tx.type !== histType) return false;
         if (histCat !== 'all' && tx.category !== histCat) return false;
 
@@ -1674,10 +1795,13 @@
 
     window.refreshDashboard = function() {
       if (typeof window.populateHistoryCategoryFilter === 'function') window.populateHistoryCategoryFilter();
+      // KPI / ratio / goal: time filter only (not history search/type/category filters)
+      const kpiTx = window.getTimeFilteredTransactions();
+      // History list & category report: full filters
       const filteredTx = window.getFilteredTransactions();
       let totalIncome = 0, totalExpense = 0;
 
-      filteredTx.forEach(tx => {
+      kpiTx.forEach(tx => {
         if (tx.type === 'income') totalIncome += Number(tx.amount);
         if (tx.type === 'expense') totalExpense += Number(tx.amount);
       });
@@ -2033,7 +2157,8 @@
       const itemsContainer = document.getElementById('cardDetailItems');
       const header = document.getElementById('cardDetailHeader');
       const title = document.getElementById('cardDetailTitle');
-      const filteredTx = window.getFilteredTransactions();
+      // Match KPI totals: time filter only (ignore history search filters)
+      const filteredTx = window.getTimeFilteredTransactions();
       let listData = [];
       let totalAmount = 0;
 
@@ -2064,7 +2189,7 @@
 
     window.openGoalDetailModal = function() {
       document.getElementById('customGoalInput').value = window.appData.customGoal || '';
-      const filteredTx = window.getFilteredTransactions();
+      const filteredTx = window.getTimeFilteredTransactions();
       let totalIncome = 0, totalExpense = 0;
       filteredTx.forEach(t => {
         if (t.type === 'income') totalIncome += Number(t.amount);
@@ -2820,7 +2945,7 @@
 
     // ----- Goal Notification (persistent flag) -----
     window.checkGoalNotification = function() {
-      const filteredTx = window.getFilteredTransactions();
+      const filteredTx = window.getTimeFilteredTransactions();
       let totalIncome = 0, totalExpense = 0;
       filteredTx.forEach(tx => {
         if (tx.type === 'income') totalIncome += Number(tx.amount);
@@ -2907,7 +3032,48 @@
     // Auto-backup debounce is handled inside unified saveLocalOnly (module script)
 
     // ----- PDF Export -----
-    window.exportDataToPDF = function() {
+    // โหลดฟอนต์ไทย (Sarabun) สำหรับ jsPDF — แคช base64 ใน memory หลังโหลดครั้งแรก
+    window._pdfThaiFontB64 = null;
+    window._loadThaiPdfFont = async function() {
+      if (window._pdfThaiFontB64) return window._pdfThaiFontB64;
+      // ลองจาก session cache ก่อน
+      try {
+        const cached = sessionStorage.getItem('somtumPdfFontSarabun');
+        if (cached && cached.length > 1000) {
+          window._pdfThaiFontB64 = cached;
+          return cached;
+        }
+      } catch (e) { /* ignore */ }
+
+      const urls = [
+        'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/sarabun/Sarabun-Regular.ttf',
+        'https://github.com/google/fonts/raw/main/ofl/sarabun/Sarabun-Regular.ttf'
+      ];
+      let lastErr = null;
+      for (const url of urls) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const buf = await res.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          let binary = '';
+          const chunk = 0x8000;
+          for (let i = 0; i < bytes.length; i += chunk) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+          }
+          const b64 = btoa(binary);
+          window._pdfThaiFontB64 = b64;
+          try { sessionStorage.setItem('somtumPdfFontSarabun', b64); } catch (e) { /* quota */ }
+          return b64;
+        } catch (e) {
+          lastErr = e;
+          console.warn('Thai font fetch failed:', url, e);
+        }
+      }
+      throw lastErr || new Error('ไม่สามารถโหลดฟอนต์ไทยได้');
+    };
+
+    window.exportDataToPDF = async function() {
       const txs = window.getFilteredTransactions();
       if (!txs || txs.length === 0) {
         alert('ไม่มีข้อมูลตามตัวกรองปัจจุบัน');
@@ -2917,40 +3083,99 @@
         alert('ไม่สามารถโหลดไลบรารี PDF ได้ กรุณาตรวจสอบอินเทอร์เน็ต');
         return;
       }
+
+      window.showToast('กำลังสร้าง PDF (โหลดฟอนต์ไทย)...');
+      let fontReady = false;
+      let fontB64 = null;
+      try {
+        fontB64 = await window._loadThaiPdfFont();
+        fontReady = true;
+      } catch (e) {
+        console.warn('PDF Thai font unavailable, fallback default font', e);
+        if (!confirm('โหลดฟอนต์ไทยไม่สำเร็จ ภาษาไทยใน PDF อาจเป็นสี่เหลี่ยม\nต้องการสร้าง PDF ต่อหรือไม่?')) return;
+      }
+
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const fontName = 'Sarabun';
+
+      if (fontReady && fontB64) {
+        doc.addFileToVFS('Sarabun-Regular.ttf', fontB64);
+        doc.addFont('Sarabun-Regular.ttf', fontName, 'normal');
+        doc.setFont(fontName, 'normal');
+      }
+
       let totalInc = 0, totalExp = 0;
       txs.forEach(t => t.type === 'income' ? totalInc += Number(t.amount) : totalExp += Number(t.amount));
       const net = totalInc - totalExp;
 
       doc.setFontSize(16);
       doc.text('รายงานรายรับ-รายจ่าย ส้มตำนายหนึ่ง', 105, 15, { align: 'center' });
-      doc.setFontSize(9);
+      doc.setFontSize(10);
       doc.text('วันที่พิมพ์: ' + new Date().toLocaleString('th-TH'), 105, 22, { align: 'center' });
-      doc.text(`รายรับ: ${totalInc.toLocaleString('th-TH', {minimumFractionDigits:2})} | รายจ่าย: ${totalExp.toLocaleString('th-TH', {minimumFractionDigits:2})} | สุทธิ: ${net.toLocaleString('th-TH', {minimumFractionDigits:2})}`, 105, 28, { align: 'center' });
+      doc.setFontSize(9);
+      doc.text(
+        `รายรับ: ${totalInc.toLocaleString('th-TH', {minimumFractionDigits:2})} | รายจ่าย: ${totalExp.toLocaleString('th-TH', {minimumFractionDigits:2})} | สุทธิ: ${net.toLocaleString('th-TH', {minimumFractionDigits:2})}`,
+        105, 28, { align: 'center' }
+      );
 
       const body = txs.map(t => [
         t.date,
         t.time || '',
         t.type === 'income' ? 'รายรับ' : 'รายจ่าย',
-        t.category,
+        t.category || '',
         t.subCategory || '',
         Number(t.amount).toLocaleString('th-TH', {minimumFractionDigits:2}),
         t.note || ''
       ]);
 
-      doc.autoTable({
+      const tableOpts = {
         startY: 34,
         head: [['วันที่', 'เวลา', 'ประเภท', 'หมวดหมู่', 'รายการย่อย', 'จำนวนเงิน', 'โน้ต']],
         body: body,
-        styles: { fontSize: 7, cellPadding: 1.5 },
-        headStyles: { fillColor: [234, 88, 12] },
-        columnStyles: { 5: { halign: 'right' } },
-        margin: { left: 8, right: 8 }
-      });
+        styles: {
+          fontSize: 8,
+          cellPadding: 1.8,
+          font: fontReady ? fontName : 'helvetica',
+          fontStyle: 'normal',
+          overflow: 'linebreak',
+          valign: 'middle'
+        },
+        headStyles: {
+          fillColor: [234, 88, 12],
+          textColor: 255,
+          fontStyle: 'normal',
+          font: fontReady ? fontName : 'helvetica',
+          fontSize: 8
+        },
+        columnStyles: {
+          0: { cellWidth: 22 },
+          1: { cellWidth: 14 },
+          2: { cellWidth: 16 },
+          5: { halign: 'right', cellWidth: 22 },
+          6: { cellWidth: 'auto' }
+        },
+        margin: { left: 8, right: 8 },
+        didDrawPage: function(data) {
+          // ใส่เลขหน้า
+          const pageCount = doc.internal.getNumberOfPages();
+          doc.setFontSize(8);
+          if (fontReady) doc.setFont(fontName, 'normal');
+          doc.text(
+            'หน้า ' + data.pageNumber + ' / ' + pageCount,
+            doc.internal.pageSize.getWidth() / 2,
+            doc.internal.pageSize.getHeight() - 8,
+            { align: 'center' }
+          );
+        }
+      };
+
+      doc.autoTable(tableOpts);
 
       doc.save(`somtum-report-${window.getLocalYYYYMMDD()}.pdf`);
-      window.showToast('สร้างไฟล์ PDF เรียบร้อย (หมายเหตุ: ภาษาไทยอาจแสดงไม่สมบูรณ์ในบางฟอนต์)');
+      window.showToast(fontReady
+        ? 'สร้างไฟล์ PDF เรียบร้อย (รองรับภาษาไทย)'
+        : 'สร้างไฟล์ PDF แล้ว (ฟอนต์ไทยไม่พร้อม — ข้อความอาจไม่สมบูรณ์)');
     };
 
     // Init notification permission (safe)
