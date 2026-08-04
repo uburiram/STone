@@ -3,7 +3,7 @@
  * Depends on: SomtumStore (js/storage.js), window.appData helpers (js/app.js)
  */
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import { getAuth, initializeAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence, indexedDBLocalPersistence, browserPopupRedirectResolver } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
     import {
       initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
       collection, doc, getDoc, setDoc, deleteDoc, getDocs, onSnapshot, writeBatch
@@ -27,7 +27,28 @@ const firebaseConfig = {
     };
 
     const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
+
+    // initializeAuth + popupRedirectResolver is required for reliable Google login
+    // when the app is hosted OUTSIDE Firebase Hosting (e.g. GitHub Pages).
+    // signInWithRedirect is broken on GH Pages because browsers block third-party
+    // storage between uburiram.github.io and *.firebaseapp.com.
+    let auth;
+    try {
+      auth = initializeAuth(app, {
+        persistence: indexedDBLocalPersistence,
+        popupRedirectResolver: browserPopupRedirectResolver
+      });
+    } catch (e) {
+      // Already initialized (HMR / double load)
+      auth = getAuth(app);
+      try {
+        await setPersistence(auth, indexedDBLocalPersistence);
+      } catch (e2) {
+        try { await setPersistence(auth, browserLocalPersistence); } catch (e3) { /* */ }
+      }
+    }
+    window.auth = auth;
+
     // Firestore offline persistence (IndexedDB)
     let db;
     try {
@@ -37,14 +58,12 @@ const firebaseConfig = {
         })
       });
     } catch (e) {
-      // Fallback if already initialized or unsupported
       console.warn('persistentLocalCache unavailable, fallback getFirestore-compatible init', e);
       const { getFirestore } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
       db = getFirestore(app);
     }
     window.db = db;
     window._firestoreOfflineEnabled = true;
-    // Expose Firestore helpers for non-module scripts
     window.collection = collection;
     window.doc = doc;
     window.getDoc = getDoc;
@@ -56,43 +75,94 @@ const firebaseConfig = {
 
     const googleProvider = new GoogleAuthProvider();
     googleProvider.setCustomParameters({ prompt: 'select_account' });
+    googleProvider.addScope('profile');
+    googleProvider.addScope('email');
 
     window.currentUser = null;
     window.unsubTransactions = null;
     window.unsubSettings = null;
     let pendingGuestData = null;
 
-    getRedirectResult(auth).then((result) => {
-      if (result && result.user) {
-        window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + result.user.displayName);
+    // Best-effort: complete any leftover redirect (usually null on GH Pages)
+    try {
+      if (auth.authStateReady) await auth.authStateReady();
+      const redirectResult = await getRedirectResult(auth);
+      if (redirectResult && redirectResult.user) {
+        console.info('[auth] redirect result', redirectResult.user.email);
+        if (typeof window.showToast === 'function') {
+          window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + (redirectResult.user.displayName || redirectResult.user.email));
+        }
       }
-    }).catch((error) => {
-      if (error.code !== 'auth/missing-initial-state') {
-        console.error("Redirect Auth Error:", error);
+    } catch (error) {
+      if (error && error.code && error.code !== 'auth/missing-initial-state') {
+        console.error('Redirect Auth Error:', error);
       }
-    });
+    }
 
+    /**
+     * Google login — POPUP first (works on GitHub Pages).
+     * Redirect is last resort only; often fails on GH Pages due to 3rd-party storage.
+     */
     window.loginGoogle = async function() {
       try {
-        await setPersistence(auth, browserLocalPersistence);
-        const isWebView = /(iPhone|iPod|iPad).*AppleWebKit(?!.*Safari)/i.test(navigator.userAgent) || /Android.*Version\/[0-9].[0-9]/.test(navigator.userAgent) || /wv/.test(navigator.userAgent);
-        if (isWebView) {
-          await signInWithRedirect(auth, googleProvider);
-        } else {
-          try {
-            const result = await signInWithPopup(auth, googleProvider);
-            window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + result.user.displayName);
-          } catch (popupError) {
-            if (popupError.code === 'auth/popup-blocked') {
-              await signInWithRedirect(auth, googleProvider);
-            } else if (popupError.code !== 'auth/popup-closed-by-user') {
-              throw popupError;
-            }
-          }
+        if (typeof window.showToast === 'function') {
+          window.showToast('กำลังเปิดหน้าต่างเข้าสู่ระบบ Google...');
         }
-      } catch (error) {
-        console.error("Login failed:", error);
-        alert('เกิดข้อผิดพลาดในการลงชื่อเข้าใช้: ' + error.message);
+
+        const result = await signInWithPopup(auth, googleProvider);
+        if (result && result.user) {
+          // onAuthStateChanged will update UI; toast here for feedback
+          if (typeof window.showToast === 'function') {
+            window.showToast('ลงชื่อเข้าใช้สำเร็จ: ' + (result.user.displayName || result.user.email));
+          }
+          // Force UI if onAuthStateChanged is slow
+          window.currentUser = result.user;
+          try {
+            const nameElem = document.getElementById('userName');
+            const btnLogin = document.getElementById('btnLoginGoogle');
+            const btnLogout = document.getElementById('btnLogoutGoogle');
+            const statusElem = document.getElementById('userSyncText');
+            const avatar = document.getElementById('userAvatar');
+            if (nameElem) nameElem.innerText = result.user.displayName || result.user.email || 'ผู้ใช้ Google';
+            if (btnLogin) btnLogin.classList.add('hidden');
+            if (btnLogout) btnLogout.classList.remove('hidden');
+            if (statusElem) statusElem.innerText = 'เชื่อมต่อ Google แล้ว — พร้อมซิงค์ Cloud';
+            if (avatar && result.user.photoURL) avatar.src = result.user.photoURL;
+          } catch (uiErr) { console.warn(uiErr); }
+          return;
+        }
+      } catch (popupError) {
+        const code = popupError && popupError.code;
+        console.warn('[auth] popup failed', code, popupError);
+
+        if (code === 'auth/popup-closed-by-user') {
+          if (typeof window.showToast === 'function') {
+            window.showToast('ปิดหน้าต่างเข้าสู่ระบบแล้ว', 'error');
+          }
+          return;
+        }
+
+        if (code === 'auth/popup-blocked') {
+          alert(
+            'เบราว์เซอร์บล็อกหน้าต่างป๊อปอัป\n\n' +
+            'วิธีแก้:\n' +
+            '1) กดไอคอนป๊อปอัปในแถบที่อยู่ แล้ว "อนุญาต"\n' +
+            '2) หรือเปิดเว็บใน Chrome/Safari (ไม่ใช่ในแอป LINE/Facebook)\n' +
+            'แล้วกดเข้าสู่ระบบอีกครั้ง'
+          );
+          return;
+        }
+
+        // internal-error / network / other — explain clearly (redirect usually also fails on GH Pages)
+        const msg = (popupError && popupError.message) ? popupError.message : String(popupError);
+        alert(
+          'เข้าสู่ระบบไม่สำเร็จ (' + (code || 'unknown') + ')\n\n' +
+          msg + '\n\n' +
+          'แนะนำ:\n' +
+          '• เปิดเว็บใน Chrome หรือ Safari โดยตรง (ไม่เปิดผ่าน LINE)\n' +
+          '• อนุญาตป๊อปอัปสำหรับ uburiram.github.io\n' +
+          '• ตรวจว่าใน Firebase Console → Authentication → Authorized domains มี uburiram.github.io'
+        );
       }
     };
 
@@ -102,16 +172,19 @@ const firebaseConfig = {
           if (window.unsubTransactions) { window.unsubTransactions(); window.unsubTransactions = null; }
           if (window.unsubSettings) { window.unsubSettings(); window.unsubSettings = null; }
           await signOut(auth);
-          // Clear everything to prevent cross-user data leak
-          SomtumStore.removeItem('somtumAppData');
-          SomtumStore.removeItem('somtumLastSyncedTimestamp');
-          SomtumStore.removeItem('somtumHasUnsyncedData');
-          SomtumStore.removeItem('somtumDataOwnerUid');
-          SomtumStore.removeItem('somtumAutoBackup');
-          SomtumStore.removeItem('somtumAutoBackupTime');
-          SomtumStore.removeItem('somtumAutoBackupUid');
-          SomtumStore.removeItem('somtumLastGoalNotified');
-          // Reset in-memory backup hash so next session starts clean
+          // Clear IDB structured stores + LS flags (privacy: no leftover txs)
+          if (SomtumStore.clearAllUserData) {
+            await SomtumStore.clearAllUserData();
+          } else {
+            SomtumStore.removeItem('somtumAppData');
+            SomtumStore.removeItem('somtumLastSyncedTimestamp');
+            SomtumStore.removeItem('somtumHasUnsyncedData');
+            SomtumStore.removeItem('somtumDataOwnerUid');
+            SomtumStore.removeItem('somtumAutoBackup');
+            SomtumStore.removeItem('somtumAutoBackupTime');
+            SomtumStore.removeItem('somtumAutoBackupUid');
+            SomtumStore.removeItem('somtumLastGoalNotified');
+          }
           if (typeof lastAutoBackupHash !== 'undefined') lastAutoBackupHash = '';
           window.appData = {
             transactions: [],
@@ -120,6 +193,8 @@ const firebaseConfig = {
             equipments: [...window.DEFAULT_EQUIPMENTS],
             customGoal: null
           };
+          window.__txCacheLoaded = false;
+          window.__loadedRange = { start: null, end: null };
           window.refreshDashboard();
           window.showToast('ออกจากระบบแล้ว');
         } catch (error) {
@@ -139,27 +214,45 @@ const firebaseConfig = {
 
       if (user) {
         avatar.src = user.photoURL || 'https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png';
-        nameElem.innerText = user.displayName || user.email;
+        nameElem.innerText = user.displayName || user.email || 'ผู้ใช้ Google';
+        if (statusElem) statusElem.innerText = 'เชื่อมต่อ Google แล้ว — พร้อมซิงค์ Cloud';
+        if (badge) badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-emerald-500 border-2 border-white dark:border-gray-800 rounded-full';
         btnLogin.classList.add('hidden');
         btnLogout.classList.remove('hidden');
 
         // Safety: classic script may not have finished early-load yet if module
         // ran first. Re-hydrate from localStorage before guest-merge decision.
         try {
+          // Prefer full IDB history for guest-merge decision (not just current filter range)
+          if (SomtumStore.getAllTx) {
+            const all = await SomtumStore.getAllTx();
+            if (all && all.length) {
+              window.appData.transactions = all;
+            }
+          }
+          if (SomtumStore.getMeta) {
+            const meta = await SomtumStore.getMeta();
+            if (meta) {
+              if (meta.categories) window.appData.categories = meta.categories;
+              if (meta.materials) window.appData.materials = meta.materials;
+              if (meta.equipments) window.appData.equipments = meta.equipments;
+              if (meta.customGoal !== undefined) window.appData.customGoal = meta.customGoal;
+            }
+          }
           const raw = SomtumStore.getItem('somtumAppData');
           if (raw && typeof window.sanitizeAppData === 'function') {
             const parsed = window.sanitizeAppData(JSON.parse(raw));
             const memLen = (window.appData && window.appData.transactions) ? window.appData.transactions.length : 0;
             const diskLen = (parsed.transactions || []).length;
-            // Prefer the larger / more complete dataset to avoid wiping local work
             if (diskLen > memLen) {
               window.appData = parsed;
             } else if (!window.appData || !Array.isArray(window.appData.transactions)) {
               window.appData = parsed;
             }
           }
+          window.appData = window.sanitizeAppData(window.appData || {});
         } catch (e) {
-          console.warn('Auth hydrate from localStorage failed:', e);
+          console.warn('Auth hydrate failed:', e);
         }
 
         const lastOwnerUid = SomtumStore.getItem('somtumDataOwnerUid');
@@ -336,11 +429,18 @@ const firebaseConfig = {
       });
 
       const txCollRef = collection(db, "users", window.currentUser.uid, "transactions");
-      window.unsubTransactions = onSnapshot(txCollRef, (querySnap) => {
+      window.unsubTransactions = onSnapshot(txCollRef, async (querySnap) => {
         const txs = [];
         querySnap.forEach((d) => { txs.push(d.data()); });
-        window.appData.transactions = txs;
-        window.appData = window.sanitizeAppData(window.appData);
+        // Persist cloud snapshot into structured IDB (per-tx), then load current filter range
+        if (SomtumStore.persistAppState) {
+          const tmp = window.sanitizeAppData(Object.assign({}, window.appData, { transactions: txs }));
+          await SomtumStore.persistAppState(tmp, { writeAllTx: true });
+        }
+        window.appData = window.sanitizeAppData(Object.assign({}, window.appData, { transactions: txs }));
+        if (typeof window.ensureTransactionsLoaded === 'function') {
+          await window.ensureTransactionsLoaded(true);
+        }
         window.saveLocalOnly();
         window.refreshDashboard();
         window.updateSyncUI(true);
@@ -398,20 +498,38 @@ const firebaseConfig = {
     window._doSoftSyncToCloud = async function() {
       if (!window.currentUser || !window.db) return;
       window.appData = window.sanitizeAppData(window.appData);
-      const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
-      const payload = JSON.parse(JSON.stringify({
-        categories: window.appData.categories,
-        materials: window.appData.materials || [],
-        equipments: window.appData.equipments || [],
-        customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
-        updatedAt: new Date().toISOString()
-      }));
-      await setDoc(settingsRef, payload, { merge: true });
+
+      // Settings only when meta dirty (or always once if API missing)
+      const metaDirty = !SomtumStore.isMetaDirty || await SomtumStore.isMetaDirty();
+      if (metaDirty) {
+        const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
+        const payload = JSON.parse(JSON.stringify({
+          categories: window.appData.categories,
+          materials: window.appData.materials || [],
+          equipments: window.appData.equipments || [],
+          customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+          updatedAt: new Date().toISOString()
+        }));
+        await setDoc(settingsRef, payload, { merge: true });
+        if (SomtumStore.clearMetaDirty) await SomtumStore.clearMetaDirty();
+      }
+
+      // Incremental: only dirty transactions (fallback: current memory range if no dirty API)
+      let dirtyIds = SomtumStore.getDirtyIds ? await SomtumStore.getDirtyIds() : [];
+      let deletedIds = SomtumStore.getDeletedIds ? await SomtumStore.getDeletedIds() : [];
+
+      if ((!dirtyIds || !dirtyIds.length) && (!deletedIds || !deletedIds.length)) {
+        // Nothing queued — still ok (settings may have been the only change)
+        return;
+      }
 
       let batch = writeBatch(db);
       let count = 0;
-      for (const tx of (window.appData.transactions || [])) {
-        const txRef = doc(db, "users", window.currentUser.uid, "transactions", tx.id);
+      for (const id of dirtyIds) {
+        let tx = (window.appData.transactions || []).find(t => t.id === id);
+        if (!tx && SomtumStore.getTx) tx = await SomtumStore.getTx(id);
+        if (!tx) continue;
+        const txRef = doc(db, "users", window.currentUser.uid, "transactions", id);
         batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
         count++;
         if (count >= 400) {
@@ -420,7 +538,20 @@ const firebaseConfig = {
           count = 0;
         }
       }
+      for (const id of deletedIds) {
+        const txRef = doc(db, "users", window.currentUser.uid, "transactions", id);
+        batch.delete(txRef);
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
       if (count > 0) await batch.commit();
+
+      if (SomtumStore.clearDirty) await SomtumStore.clearDirty(dirtyIds);
+      if (SomtumStore.clearDeleted) await SomtumStore.clearDeleted(deletedIds);
     };
 
     /**
@@ -431,13 +562,42 @@ const firebaseConfig = {
       if (!window.currentUser || !window.db) return;
       window.showToast('กำลังซิงค์แบบเครื่องนี้เป็นต้นทาง...');
       try {
-        await window._doSoftSyncToCloud();
+        // Full local set from IDB (not only in-memory range)
+        let allTx = window.appData.transactions || [];
+        if (SomtumStore.getAllTx) {
+          allTx = await SomtumStore.getAllTx();
+        }
+        window.appData = window.sanitizeAppData(Object.assign({}, window.appData, { transactions: allTx }));
 
-        const localIds = new Set((window.appData.transactions || []).map(t => t.id));
-        const txCollRef = collection(db, "users", window.currentUser.uid, "transactions");
-        const snap = await getDocs(txCollRef);
+        const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
+        await setDoc(settingsRef, JSON.parse(JSON.stringify({
+          categories: window.appData.categories,
+          materials: window.appData.materials || [],
+          equipments: window.appData.equipments || [],
+          customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+          updatedAt: new Date().toISOString()
+        })), { merge: true });
+
         let batch = writeBatch(db);
         let count = 0;
+        for (const tx of allTx) {
+          if (!tx || !tx.id) continue;
+          const txRef = doc(db, "users", window.currentUser.uid, "transactions", tx.id);
+          batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
+          count++;
+          if (count >= 400) {
+            await batch.commit();
+            batch = writeBatch(db);
+            count = 0;
+          }
+        }
+        if (count > 0) await batch.commit();
+
+        const localIds = new Set(allTx.map(t => t.id));
+        const txCollRef = collection(db, "users", window.currentUser.uid, "transactions");
+        const snap = await getDocs(txCollRef);
+        batch = writeBatch(db);
+        count = 0;
         let pruned = 0;
         for (const d of snap.docs) {
           if (!localIds.has(d.id)) {
@@ -452,6 +612,10 @@ const firebaseConfig = {
           }
         }
         if (count > 0) await batch.commit();
+
+        if (SomtumStore.clearDirty) await SomtumStore.clearDirty([]);
+        if (SomtumStore.clearDeleted) await SomtumStore.clearDeleted([]);
+        if (SomtumStore.clearMetaDirty) await SomtumStore.clearMetaDirty();
 
         window.updateSyncUI(true);
         SomtumStore.removeItem('somtumHasUnsyncedData');
@@ -483,7 +647,7 @@ const firebaseConfig = {
       }
 
       if (forcePrompt) {
-        const localCount = (window.appData.transactions || []).length;
+        const localCount = (SomtumStore.countTx ? await SomtumStore.countTx() : (window.appData.transactions || []).length);
         window.showConfirmModal(
           'ซิงค์แบบเครื่องนี้เป็นต้นทาง',
           `ระบบจะอัปโหลดข้อมูลในเครื่องนี้ขึ้น Cloud ทั้งหมด (${localCount} รายการ) แล้วลบรายการบน Cloud ที่ไม่มีในเครื่องนี้\n\n⚠️ ถ้าใช้อีกเครื่องและยังไม่ได้ซิงค์มา ข้อมูลเครื่องอื่นอาจหาย\n\nต้องการดำเนินการต่อหรือไม่?`,
@@ -583,6 +747,7 @@ const firebaseConfig = {
         // With persistentLocalCache, setDoc queues while offline and syncs later
         const txRef = doc(db, "users", window.currentUser.uid, "transactions", txObj.id);
         await setDoc(txRef, JSON.parse(JSON.stringify(txObj)));
+        if (SomtumStore.clearDirty) await SomtumStore.clearDirty([txObj.id]);
         if (navigator.onLine) {
           window.updateSyncUI(true);
         } else {
@@ -593,7 +758,7 @@ const firebaseConfig = {
         console.error("Save tx error:", e);
         SomtumStore.setItem('somtumHasUnsyncedData', 'true');
         window.updateSyncUI(false);
-        throw e; // let caller show error toast
+        throw e;
       }
     };
 
@@ -609,6 +774,7 @@ const firebaseConfig = {
       try {
         const txRef = doc(db, "users", window.currentUser.uid, "transactions", txId);
         await deleteDoc(txRef);
+        if (SomtumStore.clearDeleted) await SomtumStore.clearDeleted([txId]);
         if (navigator.onLine) {
           window.updateSyncUI(true);
         } else {
@@ -623,21 +789,28 @@ const firebaseConfig = {
       }
     };
 
-    // Single unified saveLocalOnly: localStorage + offline flag + debounced auto-backup
+    // saveLocalOnly: meta + flags only (transactions already in IDB per-record)
     window.saveLocalOnly = function() {
       try {
-        SomtumStore.setItem('somtumAppData', JSON.stringify(window.appData));
+        if (window.SomtumStore && SomtumStore.persistAppState) {
+          // fire-and-forget meta persist (tx written at call site)
+          SomtumStore.persistAppState(window.appData, { writeAllTx: false }).catch(function(e) {
+            console.error('persistAppState', e);
+          });
+        } else {
+          // Fallback legacy path
+          SomtumStore.setItem('somtumAppData', JSON.stringify(window.appData));
+        }
         if (!navigator.onLine && window.currentUser) {
           SomtumStore.setItem('somtumHasUnsyncedData', 'true');
           if (typeof window.updatePendingSyncButton === 'function') window.updatePendingSyncButton();
         }
-        // Debounced auto-backup
         if (typeof window.performAutoBackup === 'function') {
           clearTimeout(window._autoBakT);
-          window._autoBakT = setTimeout(window.performAutoBackup, 5000);
+          window._autoBakT = setTimeout(function() { window.performAutoBackup(); }, 5000);
         }
       } catch (e) {
         console.error("saveLocalOnly failed:", e);
-        throw e; // surface QuotaExceededError etc.
+        throw e;
       }
     };

@@ -1,3 +1,25 @@
+    /** Money helpers — consistent 2-decimal arithmetic (avoid float drift / NaN) */
+    window.roundMoney = function(n) {
+      const x = Number(n);
+      if (!isFinite(x)) return 0;
+      return Math.round(x * 100) / 100;
+    };
+    /** Sum income/expense from a transaction list. Unknown types are ignored. */
+    window.sumIncomeExpense = function(list) {
+      let income = 0, expense = 0;
+      (list || []).forEach(function(tx) {
+        if (!tx) return;
+        const a = window.roundMoney(tx.amount);
+        if (tx.type === 'income') income = window.roundMoney(income + a);
+        else if (tx.type === 'expense') expense = window.roundMoney(expense + a);
+      });
+      return {
+        income: income,
+        expense: expense,
+        net: window.roundMoney(income - expense)
+      };
+    };
+
     window.escapeHTML = function(str) {
       if (typeof str !== 'string') return str;
       return str.replace(/[&<>'"]/g, tag => ({
@@ -102,8 +124,93 @@
     // CRITICAL: Hydrate from SomtumStore (IndexedDB primary, localStorage fallback).
     // Safe to call before/after SomtumStore.init() — getItem falls back to LS until migration runs.
     // Module script (Firebase Auth) may restore session before onload; empty appData would cause data loss.
-    window.__hydrateAppDataFromStore = function(preferRicher) {
+    window.__txCacheLoaded = false;
+    window.__loadedRange = { start: null, end: null };
+
+    /** Compute YYYY-MM-DD bounds for current time filter (inclusive). null = all */
+    window.getFilterDateBounds = function() {
+      const now = new Date();
+      const ymd = (d) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return y + '-' + m + '-' + day;
+      };
+      if (currentFilter === 'custom') {
+        return { start: selectedCustomDate, end: selectedCustomDate };
+      }
+      if (currentFilter === 'range') {
+        let a = selectedStartDate, b = selectedEndDate;
+        if (a && b && a > b) { const t = a; a = b; b = t; }
+        return { start: a || null, end: b || null };
+      }
+      if (currentFilter === 'daily') {
+        const t = getLocalYYYYMMDD();
+        return { start: t, end: t };
+      }
+      if (currentFilter === 'weekly') {
+        const day = now.getDay();
+        const diff = day === 0 ? -6 : 1 - day;
+        const startOfWeek = new Date(now);
+        startOfWeek.setDate(now.getDate() + diff);
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+        return { start: ymd(startOfWeek), end: ymd(endOfWeek) };
+      }
+      if (currentFilter === 'monthly') {
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        return { start: ymd(start), end: ymd(end) };
+      }
+      if (currentFilter === 'yearly') {
+        return { start: now.getFullYear() + '-01-01', end: now.getFullYear() + '-12-31' };
+      }
+      return { start: null, end: null }; // all
+    };
+
+    /** Load transactions for filter range into appData (from IDB, not giant LS blob) */
+    window.ensureTransactionsLoaded = async function(force) {
+      if (!window.SomtumStore || !SomtumStore.getTxByDateRange) return;
+      const bounds = window.getFilterDateBounds();
+      let start = bounds.start;
+      let end = bounds.end;
+
+      // IMPORTANT:
+      // - filter "all" => start/end are null => must load EVERY transaction (unbounded).
+      // - Do NOT shrink unbounded range to the visible calendar month
+      //   (that bug made KPI "ทั้งหมด" only count the calendar month).
+      // - When range is already bounded (daily/weekly/month/…), expand to also
+      //   cover the month shown on the calendar so the calendar grid is complete.
+      const isUnbounded = (start == null && end == null);
+      if (!isUnbounded && typeof calendarCurrentDate !== 'undefined' && calendarCurrentDate) {
+        const cy = calendarCurrentDate.getFullYear();
+        const cm = calendarCurrentDate.getMonth();
+        const cStart = cy + '-' + String(cm + 1).padStart(2, '0') + '-01';
+        const lastDay = new Date(cy, cm + 1, 0).getDate();
+        const cEnd = cy + '-' + String(cm + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+        if (!start || cStart < start) start = cStart;
+        if (!end || cEnd > end) end = cEnd;
+      }
+
+      const same = window.__loadedRange && window.__loadedRange.start === start && window.__loadedRange.end === end;
+      if (same && window.__txCacheLoaded && !force) return;
+
       try {
+        // null,null => getAll via openCursor (see storage.getTxByDateRange)
+        const list = await SomtumStore.getTxByDateRange(start, end);
+        window.appData.transactions = list || [];
+        window.__loadedRange = { start: start, end: end };
+        window.__txCacheLoaded = true;
+      } catch (e) {
+        console.error('ensureTransactionsLoaded failed', e);
+      }
+    };
+
+    window.__hydrateAppDataFromStore = function(preferRicher) {
+      // Sync path: try meta + optional legacy blob only for structure defaults
+      try {
+        // Prefer structured meta when available via cached memory after init
+        // Full async hydrate happens in __hydrateAppDataFromStoreAsync
         const savedData = SomtumStore.getItem('somtumAppData');
         if (savedData) {
           const parsed = window.sanitizeAppData(JSON.parse(savedData));
@@ -111,10 +218,19 @@
             const memLen = window.appData.transactions.length;
             const diskLen = (parsed.transactions || []).length;
             if (diskLen >= memLen) {
-              window.appData = parsed;
+              // Keep categories/settings from legacy; txs will be replaced by IDB range load
+              window.appData.categories = parsed.categories;
+              window.appData.materials = parsed.materials;
+              window.appData.equipments = parsed.equipments;
+              window.appData.customGoal = parsed.customGoal;
+              if (!window.__txCacheLoaded) window.appData.transactions = parsed.transactions;
             }
           } else {
-            window.appData = parsed;
+            window.appData.categories = parsed.categories;
+            window.appData.materials = parsed.materials;
+            window.appData.equipments = parsed.equipments;
+            window.appData.customGoal = parsed.customGoal;
+            if (!window.__txCacheLoaded) window.appData.transactions = parsed.transactions || [];
           }
         } else if (!window.appData || !Array.isArray(window.appData.transactions)) {
           window.appData = window.sanitizeAppData(window.appData || {});
@@ -126,14 +242,60 @@
         }
       }
     };
+
+    window.__hydrateAppDataFromStoreAsync = async function() {
+      try {
+        if (SomtumStore.getMeta) {
+          const meta = await SomtumStore.getMeta();
+          if (meta) {
+            if (meta.categories) window.appData.categories = meta.categories;
+            if (meta.materials) window.appData.materials = meta.materials;
+            if (meta.equipments) window.appData.equipments = meta.equipments;
+            if (meta.customGoal !== undefined) window.appData.customGoal = meta.customGoal;
+            window.appData = window.sanitizeAppData(window.appData);
+          }
+        }
+        // Prefer full history on first paint so no month looks "missing"
+        let n = SomtumStore.countTx ? await SomtumStore.countTx() : 0;
+        if (n > 0 && SomtumStore.getAllTx) {
+          const all = await SomtumStore.getAllTx();
+          window.appData.transactions = all || [];
+          window.__txCacheLoaded = true;
+          window.__loadedRange = { start: null, end: null };
+        } else {
+          await window.ensureTransactionsLoaded(true);
+        }
+        // Recovery: if IDB empty but legacy blob exists, force structured import
+        n = SomtumStore.countTx ? await SomtumStore.countTx() : 0;
+        if (n === 0) {
+          const raw = SomtumStore.getItem('somtumAppData');
+          if (raw) {
+            try {
+              const parsed = window.sanitizeAppData(JSON.parse(raw));
+              if ((parsed.transactions || []).length > 0 && SomtumStore.persistAppState) {
+                await SomtumStore.persistAppState(parsed, { writeAllTx: true });
+                window.appData = parsed;
+                window.__txCacheLoaded = true;
+                window.__loadedRange = { start: null, end: null };
+                console.info('[hydrate] recovered', parsed.transactions.length, 'txs from legacy blob');
+              }
+            } catch (e2) { console.warn(e2); }
+          }
+        }
+      } catch (e) {
+        console.error('async hydrate failed', e);
+        window.__hydrateAppDataFromStore(true);
+      }
+    };
+
     window.__hydrateAppDataFromStore(false);
 
-    // After IDB migration, re-hydrate if store has richer data
+    // After IDB migration, load meta + range (not full blob into RAM forever)
     if (window.SomtumStore && typeof window.SomtumStore.init === 'function') {
-      window.SomtumStore.init().then(function () {
-        window.__hydrateAppDataFromStore(true);
+      window.SomtumStore.init().then(async function () {
+        await window.__hydrateAppDataFromStoreAsync();
         if (typeof window.refreshDashboard === 'function' && document.getElementById('kpiTotalIncome')) {
-          try { window.refreshDashboard(); } catch (e) { /* UI may not be ready */ }
+          try { await window.refreshDashboard(); } catch (e) { /* UI may not be ready */ }
         }
       }).catch(function (e) {
         console.warn('SomtumStore.init from app.js:', e);
@@ -450,10 +612,10 @@
         const cat = tx.category || 'ไม่ระบุหมวดหมู่';
         const sub = tx.subCategory || 'ทั่วไป';
         if (!grouped[cat]) grouped[cat] = { total: 0, subs: {} };
-        grouped[cat].total += Number(tx.amount) || 0;
+        grouped[cat].total = window.roundMoney(grouped[cat].total + window.roundMoney(tx.amount));
 
         if (!grouped[cat].subs[sub]) grouped[cat].subs[sub] = { total: 0, items: [] };
-        grouped[cat].subs[sub].total += Number(tx.amount) || 0;
+        grouped[cat].subs[sub].total = window.roundMoney(grouped[cat].subs[sub].total + window.roundMoney(tx.amount));
         grouped[cat].subs[sub].items.push(tx);
       });
 
@@ -535,22 +697,24 @@
       }
     }
 
-    window.refreshDashboard = function() {
+    window.refreshDashboard = async function() {
+      try {
+        if (typeof window.ensureTransactionsLoaded === 'function') {
+          await window.ensureTransactionsLoaded(false);
+        }
+      } catch (e) { console.warn('tx load before refresh', e); }
       if (typeof window.populateHistoryCategoryFilter === 'function') window.populateHistoryCategoryFilter();
       // KPI / ratio / goal: time filter only (not history search/type/category filters)
       const kpiTx = window.getTimeFilteredTransactions();
       // History list & category report: full filters
       const filteredTx = window.getFilteredTransactions();
-      let totalIncome = 0, totalExpense = 0;
+      const sums = window.sumIncomeExpense(kpiTx);
+      const totalIncome = sums.income;
+      const totalExpense = sums.expense;
 
-      kpiTx.forEach(tx => {
-        if (tx.type === 'income') totalIncome += Number(tx.amount);
-        if (tx.type === 'expense') totalExpense += Number(tx.amount);
-      });
-
-      const netProfit = totalIncome - totalExpense;
-      let targetGoal = totalExpense > 0 ? totalExpense * 1.6 : (totalIncome > 0 ? totalIncome : 1000);
-      if (window.appData.customGoal && window.appData.customGoal > 0) targetGoal = window.appData.customGoal;
+      const netProfit = sums.net;
+      let targetGoal = totalExpense > 0 ? window.roundMoney(totalExpense * 1.6) : (totalIncome > 0 ? totalIncome : 1000);
+      if (window.appData.customGoal && window.appData.customGoal > 0) targetGoal = window.roundMoney(window.appData.customGoal);
 
       const goalAchievedPercent = targetGoal > 0 ? (totalIncome / targetGoal) * 100 : 0;
 
@@ -825,7 +989,7 @@
 
       const txObj = {
         id: editId || (crypto.randomUUID ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2))),
-        type, date, time, category, subCategory, amount: amountVal, note
+        type, date, time, category, subCategory, amount: window.roundMoney(amountVal), note
       };
 
       if(editId) {
@@ -835,17 +999,23 @@
         window.appData.transactions.push(txObj);
       }
 
-      // Save local first (with error feedback)
+      // Save local: single tx to IDB + meta (no giant LS blob)
       try {
+        if (window.SomtumStore && SomtumStore.putTx) {
+          await SomtumStore.putTx(txObj);
+          await SomtumStore.markDirty(txObj.id);
+          await SomtumStore.persistAppState(window.appData, { writeAllTx: false });
+        }
         window.saveLocalOnly();
       } catch (err) {
+        console.error(err);
         window.showToast('บันทึกลงเครื่องล้มเหลว (ที่เก็บข้อมูลอาจเต็ม)', 'error');
         return;
       }
 
       closeTransactionModal();
 
-      // Then try cloud
+      // Then try cloud (incremental — single doc)
       try {
         await window.saveTransactionToFirestore(txObj);
         window.showToast(editId ? 'อัปเดตข้อมูลแล้ว' : 'บันทึกข้อมูลเรียบร้อย');
@@ -862,15 +1032,22 @@
       }
     }
 
-    window.editTransaction = function(id) {
-      const tx = window.appData.transactions.find(t=>t.id===id);
-      if(tx) openTransactionModal(tx.type, id);
+    window.editTransaction = async function(id) {
+      let tx = (window.appData.transactions || []).find(t => t.id === id);
+      if (!tx && window.SomtumStore && SomtumStore.getTx) {
+        try { tx = await SomtumStore.getTx(id); } catch (e) { console.warn(e); }
+      }
+      if (tx) openTransactionModal(tx.type, id);
+      else window.showToast('ไม่พบรายการ', 'error');
     }
 
     window.deleteTransaction = function(id) {
       window.showConfirmModal("ยืนยันการลบ", "คุณต้องการลบรายการนี้ใช่หรือไม่?", async () => {
         window.appData.transactions = window.appData.transactions.filter(t => t.id !== id);
         try {
+          if (window.SomtumStore && SomtumStore.markDeleted) {
+            await SomtumStore.markDeleted(id);
+          }
           window.saveLocalOnly();
         } catch (err) {
           window.showToast('ลบในเครื่องล้มเหลว', 'error');
@@ -918,7 +1095,7 @@
         title.innerHTML = `<i class="fa-solid fa-chart-line mr-2"></i>รายละเอียดกำไร/ขาดทุน`;
       }
 
-      listData.forEach(t => totalAmount += Number(t.amount) || 0);
+      listData.forEach(t => totalAmount = window.roundMoney(totalAmount + window.roundMoney(t.amount)));
 
       document.getElementById('cardDetailSummary').innerHTML = `
         <div>พบข้อมูลทั้งหมด <strong>${listData.length}</strong> รายการ (ตามตัวกรองเวลาปัจจุบัน)</div>
@@ -933,11 +1110,12 @@
       document.getElementById('customGoalInput').value = window.appData.customGoal || '';
       const filteredTx = window.getTimeFilteredTransactions();
       let totalIncome = 0, totalExpense = 0;
-      filteredTx.forEach(t => {
-        if (t.type === 'income') totalIncome += Number(t.amount);
-        else totalExpense += Number(t.amount);
-      });
-      let calc = totalExpense > 0 ? totalExpense * 1.6 : (totalIncome > 0 ? totalIncome : 1000);
+      {
+        const gSums = window.sumIncomeExpense(filteredTx);
+        totalIncome = gSums.income;
+        totalExpense = gSums.expense;
+      }
+      let calc = totalExpense > 0 ? window.roundMoney(totalExpense * 1.6) : (totalIncome > 0 ? totalIncome : 1000);
       let formulaText = '';
       if (window.appData.customGoal && window.appData.customGoal > 0) {
         formulaText = `เป้าหมายที่ตั้งเอง: ฿${Number(window.appData.customGoal).toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
@@ -959,7 +1137,7 @@
         alert('กรุณาใส่เป้าหมายที่เป็นตัวเลขมากกว่า 0');
         return;
       }
-      window.appData.customGoal = val;
+      window.appData.customGoal = window.roundMoney(val);
       window.syncDataToCloud(true);
       window.refreshDashboard();
       window.showToast('ตั้งเป้าหมายสำเร็จ');
@@ -989,8 +1167,8 @@
       txList.forEach(tx => {
         const d = tx.date || 'ไม่ระบุวันที่';
         if (!dateGrouped[d]) dateGrouped[d] = { inc: 0, exp: 0, items: [] };
-        if (tx.type === 'income') dateGrouped[d].inc += Number(tx.amount) || 0;
-        if (tx.type === 'expense') dateGrouped[d].exp += Number(tx.amount) || 0;
+        if (tx.type === 'income') dateGrouped[d].inc = window.roundMoney(dateGrouped[d].inc + window.roundMoney(tx.amount));
+        if (tx.type === 'expense') dateGrouped[d].exp = window.roundMoney(dateGrouped[d].exp + window.roundMoney(tx.amount));
         dateGrouped[d].items.push(tx);
       });
 
@@ -1079,8 +1257,14 @@
       window.showToast('ส่งออก CSV เรียบร้อยแล้ว');
     };
 
-    window.exportDataToJSON = function() {
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(window.appData));
+    window.exportDataToJSON = async function() {
+      let payload = window.appData;
+      try {
+        if (window.SomtumStore && SomtumStore.buildLegacyAppData) {
+          payload = await SomtumStore.buildLegacyAppData(window.appData);
+        }
+      } catch (e) { console.warn('export buildLegacy', e); }
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload));
       const downloadAnchorNode = document.createElement('a');
       downloadAnchorNode.setAttribute("href", dataStr);
       downloadAnchorNode.setAttribute("download", `somtum-backup-${window.getLocalYYYYMMDD()}.json`);
@@ -1105,9 +1289,29 @@
           window.showConfirmModal("ยืนยันการนำเข้าข้อมูล", "ข้อมูลใหม่จะถูกนำมาแทนที่ข้อมูลปัจจุบัน คุณต้องการดำเนินการต่อหรือไม่?", async () => {
             window.showToast("กำลังนำเข้าข้อมูล...");
             const newData = window.sanitizeAppData(parsed);
-            // Update local first
             window.appData = newData;
-            try { window.saveLocalOnly(); } catch (e) {
+            try {
+              // CRITICAL: write ALL transactions into IDB (not just memory / meta)
+              if (window.SomtumStore && SomtumStore.persistAppState) {
+                await SomtumStore.persistAppState(newData, { writeAllTx: true });
+                if (SomtumStore.markDirty) {
+                  for (const tx of (newData.transactions || [])) {
+                    if (tx && tx.id) await SomtumStore.markDirty(tx.id);
+                  }
+                }
+                if (SomtumStore.markMetaDirty) SomtumStore.markMetaDirty();
+              }
+              // Also keep a legacy blob only if small enough (handled inside setItem)
+              try {
+                SomtumStore.setItem('somtumAppData', JSON.stringify(newData));
+              } catch (e2) { /* quota ok — IDB is source of truth */ }
+              window.__txCacheLoaded = false;
+              if (typeof window.ensureTransactionsLoaded === 'function') {
+                await window.ensureTransactionsLoaded(true);
+              }
+              window.saveLocalOnly();
+            } catch (e) {
+              console.error(e);
               window.showToast('บันทึกลงเครื่องล้มเหลว', 'error');
               return;
             }
@@ -1206,10 +1410,15 @@
       window.renderDrillDownAccordion(limitedReport, 'categoryReportList', 'catReportTab');
     }
 
-    window.changeCalendarMonth = function(delta) {
+    window.changeCalendarMonth = async function(delta) {
       // Prevent overflow when current day is 29/30/31
       calendarCurrentDate.setDate(1);
       calendarCurrentDate.setMonth(calendarCurrentDate.getMonth() + delta);
+      try {
+        if (typeof window.ensureTransactionsLoaded === 'function') {
+          await window.ensureTransactionsLoaded(true);
+        }
+      } catch (e) { console.warn(e); }
       renderFullMonthCalendar();
     }
 
@@ -1233,9 +1442,9 @@
         let net = 0;
 
         if(txs.length > 0) {
-          let inc=0, exp=0;
-          txs.forEach(t => t.type==='income' ? inc+=Number(t.amount) : exp+=Number(t.amount));
-          net = inc - exp;
+          const daySums = window.sumIncomeExpense(txs);
+          let inc = daySums.income, exp = daySums.expense;
+          net = daySums.net;
 
           // สีพื้นหลังตามกำไร/ขาดทุน
           if (net > 0) {
@@ -1259,18 +1468,21 @@
       }
     }
 
-    window.openCalendarDayModal = function(dStr) {
+    window.openCalendarDayModal = async function(dStr) {
       selectedCalendarDay = dStr;
-      const txs = (window.appData.transactions || []).filter(t => t.date === dStr);
-      let inc = 0, exp = 0;
-      txs.forEach(t => {
-        if(t.type === 'income') inc += Number(t.amount);
-        else exp += Number(t.amount);
-      });
+      let txs = (window.appData.transactions || []).filter(t => t.date === dStr);
+      try {
+        if (window.SomtumStore && SomtumStore.getTxByDateRange) {
+          const fromIdb = await SomtumStore.getTxByDateRange(dStr, dStr);
+          if (fromIdb && fromIdb.length) txs = fromIdb;
+        }
+      } catch (e) { console.warn('cal day IDB', e); }
+      const sums = window.sumIncomeExpense(txs);
+      const inc = sums.income, exp = sums.expense, net = sums.net;
 
       document.getElementById('calDayInc').innerText = '฿' + inc.toLocaleString('th-TH', {minimumFractionDigits: 2});
       document.getElementById('calDayExp').innerText = '฿' + exp.toLocaleString('th-TH', {minimumFractionDigits: 2});
-      document.getElementById('calDayNet').innerText = '฿' + (inc - exp).toLocaleString('th-TH', {minimumFractionDigits: 2});
+      document.getElementById('calDayNet').innerText = '฿' + net.toLocaleString('th-TH', {minimumFractionDigits: 2});
       document.getElementById('calModalTitle').innerHTML = `<i class="fa-solid fa-calendar-day"></i> รายการวันที่ ${dStr}`;
       
       window.renderDrillDownAccordion(txs, 'calDayTxList', 'calDayModal');
@@ -1688,12 +1900,9 @@
     // ----- Goal Notification (persistent flag) -----
     window.checkGoalNotification = function() {
       const filteredTx = window.getTimeFilteredTransactions();
-      let totalIncome = 0, totalExpense = 0;
-      filteredTx.forEach(tx => {
-        if (tx.type === 'income') totalIncome += Number(tx.amount);
-        if (tx.type === 'expense') totalExpense += Number(tx.amount);
-      });
-      let targetGoal = totalExpense > 0 ? totalExpense * 1.6 : (totalIncome > 0 ? totalIncome : 1000);
+      const gSums = window.sumIncomeExpense(filteredTx);
+      let totalIncome = gSums.income, totalExpense = gSums.expense;
+      let targetGoal = totalExpense > 0 ? window.roundMoney(totalExpense * 1.6) : (totalIncome > 0 ? totalIncome : 1000);
       if (window.appData.customGoal && window.appData.customGoal > 0) targetGoal = window.appData.customGoal;
       const pct = targetGoal > 0 ? (totalIncome / targetGoal) * 100 : 0;
       const now = Date.now();
@@ -1715,24 +1924,27 @@
       }
     };
 
-    // Hook into refreshDashboard (safe)
+    // Hook into refreshDashboard (safe, preserve async)
     if (typeof window.refreshDashboard === 'function') {
       const originalRefresh = window.refreshDashboard;
-      window.refreshDashboard = function() {
-        originalRefresh();
+      window.refreshDashboard = async function() {
+        await originalRefresh();
         window.checkGoalNotification();
       };
     }
 
     // ----- Auto Backup (stronger hash + scoped) -----
     let lastAutoBackupHash = '';
-    window.performAutoBackup = function() {
+    window.performAutoBackup = async function() {
       try {
-        const dataStr = JSON.stringify(window.appData);
-        // Stronger hash: length + tx count + simple amount checksum
+        let data = window.appData;
+        if (window.SomtumStore && SomtumStore.buildLegacyAppData) {
+          data = await SomtumStore.buildLegacyAppData(window.appData);
+        }
+        const dataStr = JSON.stringify(data);
         let amountSum = 0;
-        (window.appData.transactions || []).forEach(t => amountSum += Number(t.amount) || 0);
-        const hash = dataStr.length + '_' + (window.appData.transactions || []).length + '_' + amountSum.toFixed(2);
+        (data.transactions || []).forEach(t => amountSum += Number(t.amount) || 0);
+        const hash = dataStr.length + '_' + (data.transactions || []).length + '_' + amountSum.toFixed(2);
         if (hash !== lastAutoBackupHash) {
           SomtumStore.setItem('somtumAutoBackup', dataStr);
           SomtumStore.setItem('somtumAutoBackupTime', new Date().toISOString());
@@ -1758,14 +1970,22 @@
         // Guest trying to restore a logged-in user's backup
         if (!confirm('Auto Backup นี้สร้างจากบัญชีที่ล็อกอินอยู่ ต้องการกู้คืนเป็นข้อมูล Guest ใช่หรือไม่?')) return;
       }
-      window.showConfirmModal('กู้คืนจาก Auto Backup', 'ข้อมูลปัจจุบันจะถูกแทนที่ด้วยสำรองเมื่อ ' + (t ? new Date(t).toLocaleString('th-TH') : 'ไม่ทราบเวลา') + ' ต้องการดำเนินการต่อหรือไม่?', () => {
+      window.showConfirmModal('กู้คืนจาก Auto Backup', 'ข้อมูลปัจจุบันจะถูกแทนที่ด้วยสำรองเมื่อ ' + (t ? new Date(t).toLocaleString('th-TH') : 'ไม่ทราบเวลา') + ' ต้องการดำเนินการต่อหรือไม่?', async () => {
         try {
           window.appData = window.sanitizeAppData(JSON.parse(bak));
+          if (window.SomtumStore && SomtumStore.persistAppState) {
+            await SomtumStore.persistAppState(window.appData, { writeAllTx: true });
+            window.__txCacheLoaded = false;
+          }
           window.saveLocalOnly();
           window.syncDataToCloud();
+          if (typeof window.ensureTransactionsLoaded === 'function') {
+            await window.ensureTransactionsLoaded(true);
+          }
           window.refreshDashboard();
           window.showToast('กู้คืนจาก Auto Backup สำเร็จ');
         } catch (e) {
+          console.error(e);
           alert('กู้คืนล้มเหลว');
         }
       });
@@ -1847,9 +2067,9 @@
         doc.setFont(fontName, 'normal');
       }
 
-      let totalInc = 0, totalExp = 0;
-      txs.forEach(t => t.type === 'income' ? totalInc += Number(t.amount) : totalExp += Number(t.amount));
-      const net = totalInc - totalExp;
+      const pdfSums = window.sumIncomeExpense(txs);
+      const totalInc = pdfSums.income, totalExp = pdfSums.expense;
+      const net = pdfSums.net;
 
       doc.setFontSize(16);
       doc.text('รายงานรายรับ-รายจ่าย ส้มตำนายหนึ่ง', 105, 15, { align: 'center' });
@@ -2002,36 +2222,144 @@
       document.getElementById('monthlyReportModal').classList.remove('hidden');
     };
 
-    // ----- Daily slip (large print) -----
-    window.printDailySlip = function() {
-      const today = getLocalYYYYMMDD();
-      const txs = (window.appData.transactions || []).filter(t => t.date === today);
-      let inc = 0, exp = 0;
-      txs.forEach(t => t.type === 'income' ? inc += Number(t.amount) : exp += Number(t.amount));
-      const net = inc - exp;
-      const w = window.open('', '_blank', 'width=400,height=600');
-      if (!w) { alert('กรุณาอนุญาตป๊อปอัปเพื่อพิมพ์'); return; }
-      w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>สรุปยอดวันนี้</title>
-        <style>
-          body{font-family:sans-serif;padding:24px;text-align:center;color:#111}
-          h1{font-size:22px;margin:0 0 8px}
-          .date{font-size:14px;color:#555;margin-bottom:20px}
-          .row{font-size:28px;font-weight:800;margin:12px 0}
-          .inc{color:#047857}.exp{color:#be123c}.net{color:#c2410c;font-size:32px}
-          .line{border-top:2px dashed #ccc;margin:16px 0}
-          .meta{font-size:12px;color:#666;margin-top:24px}
-          @media print{button{display:none}}
-        </style></head><body>
-        <h1>ส้มตำนายหนึ่ง</h1>
-        <div class="date">สรุปยอดวันที่ ${today}</div>
-        <div class="row inc">รายรับ ฿${inc.toLocaleString('th-TH',{minimumFractionDigits:2})}</div>
-        <div class="row exp">รายจ่าย ฿${exp.toLocaleString('th-TH',{minimumFractionDigits:2})}</div>
-        <div class="line"></div>
-        <div class="row net">สุทธิ ฿${net.toLocaleString('th-TH',{minimumFractionDigits:2})}</div>
-        <div class="meta">${txs.length} รายการ · พิมพ์เมื่อ ${new Date().toLocaleString('th-TH')}</div>
-        <p><button onclick="window.print()" style="margin-top:20px;padding:10px 20px;font-size:16px">พิมพ์</button></p>
-        </body></html>`);
-      w.document.close();
+    // ----- Daily slip (fullscreen on-screen + print) -----
+    window.printDailySlip = async function() {
+      const today = (typeof getLocalYYYYMMDD === 'function')
+        ? getLocalYYYYMMDD()
+        : window.getLocalYYYYMMDD();
+      // Prefer IDB for today so slip is complete even if memory only has a filter range
+      let txs = (window.appData.transactions || []).filter(t => t.date === today);
+      try {
+        if (window.SomtumStore && SomtumStore.getTxByDateRange) {
+          const fromIdb = await SomtumStore.getTxByDateRange(today, today);
+          if (fromIdb && fromIdb.length) txs = fromIdb;
+        }
+      } catch (e) { console.warn('printDailySlip IDB', e); }
+      const sums = window.sumIncomeExpense(txs);
+      const inc = sums.income, exp = sums.expense, net = sums.net;
+
+      // Percentages
+      const marginPct = inc > 0 ? (net / inc) * 100 : 0;           // กำไรต่อรายรับ
+      const expOfIncPct = inc > 0 ? (exp / inc) * 100 : (exp > 0 ? 100 : 0); // รายจ่ายต่อรายรับ
+      const profitOfExpPct = exp > 0 ? (net / exp) * 100 : null;   // กำไรต่อต้นทุน
+
+      const fmt = (n) => Number(n).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const fmtPct = (n) => (n === null || !isFinite(n)) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+      const netColor = net >= 0 ? '#047857' : '#be123c';
+      const marginColor = marginPct >= 0 ? '#047857' : '#be123c';
+
+      // Thai date label
+      let dateLabel = today;
+      try {
+        const parts = today.split('-');
+        if (parts.length === 3) {
+          const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+          dateLabel = d.toLocaleDateString('th-TH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        }
+      } catch (e) { /* keep ISO */ }
+
+      // Remove previous overlay if any
+      const old = document.getElementById('dailySlipOverlay');
+      if (old) old.remove();
+
+      const overlay = document.createElement('div');
+      overlay.id = 'dailySlipOverlay';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.innerHTML = `
+<div class="ds-backdrop">
+  <div class="ds-sheet">
+    <div class="ds-header">
+      <div class="ds-title">ใบสรุปยอดวันนี้</div>
+      <button type="button" class="ds-close" aria-label="ปิด">&times;</button>
+    </div>
+    <div class="ds-body" id="dailySlipPrintArea">
+      <div class="ds-brand">ส้มตำนายหนึ่ง</div>
+      <div class="ds-date">${dateLabel}</div>
+      <div class="ds-card ds-inc">
+        <div class="ds-label">รายรับ</div>
+        <div class="ds-amt">฿${fmt(inc)}</div>
+      </div>
+      <div class="ds-card ds-exp">
+        <div class="ds-label">รายจ่าย <span class="ds-pct-inline">${fmtPct(expOfIncPct)} ของรายรับ</span></div>
+        <div class="ds-amt">฿${fmt(exp)}</div>
+      </div>
+      <div class="ds-card ds-net" style="border-color:${netColor}">
+        <div class="ds-label">สุทธิ (กำไร/ขาดทุน)</div>
+        <div class="ds-amt" style="color:${netColor}">฿${fmt(net)}</div>
+        <div class="ds-pct" style="color:${marginColor}">อัตรากำไร ${fmtPct(marginPct)} ของรายรับ</div>
+        <div class="ds-pct-sub">${profitOfExpPct === null ? 'ยังไม่มีรายจ่ายเพื่อเทียบต้นทุน' : ('กำไรต่อต้นทุน ' + fmtPct(profitOfExpPct))}</div>
+      </div>
+      <div class="ds-meta">${txs.length} รายการ · อัปเดต ${new Date().toLocaleString('th-TH')}</div>
+    </div>
+    <div class="ds-actions">
+      <button type="button" class="ds-btn ds-btn-print">พิมพ์ / บันทึกเป็น PDF</button>
+      <button type="button" class="ds-btn ds-btn-close2">ปิด</button>
+    </div>
+  </div>
+</div>`;
+
+      const style = document.createElement('style');
+      style.id = 'dailySlipStyle';
+      style.textContent = `
+#dailySlipOverlay{position:fixed;inset:0;z-index:120;font-family:'Prompt',system-ui,sans-serif}
+#dailySlipOverlay .ds-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:stretch;justify-content:center;padding:0}
+#dailySlipOverlay .ds-sheet{background:#fff;width:100%;max-width:480px;height:100%;max-height:100dvh;display:flex;flex-direction:column;box-shadow:0 0 40px rgba(0,0,0,.25)}
+@media(min-width:520px){
+  #dailySlipOverlay .ds-backdrop{align-items:center;padding:16px}
+  #dailySlipOverlay .ds-sheet{height:auto;max-height:min(92dvh,720px);border-radius:24px;overflow:hidden}
+}
+#dailySlipOverlay .ds-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #eee;flex-shrink:0;background:linear-gradient(90deg,#ea580c,#f59e0b);color:#fff}
+#dailySlipOverlay .ds-title{font-weight:700;font-size:clamp(15px,4.2vw,17px)}
+#dailySlipOverlay .ds-close{background:transparent;border:0;color:#fff;font-size:28px;line-height:1;cursor:pointer;padding:0 6px}
+#dailySlipOverlay .ds-body{flex:1;overflow:auto;padding:clamp(16px,4vw,24px);text-align:center;-webkit-overflow-scrolling:touch}
+#dailySlipOverlay .ds-brand{font-size:clamp(22px,6.5vw,28px);font-weight:800;color:#111;margin:4px 0 6px}
+#dailySlipOverlay .ds-date{font-size:clamp(13px,3.6vw,15px);color:#555;margin-bottom:clamp(14px,3vw,20px)}
+#dailySlipOverlay .ds-card{border:2px solid #e5e7eb;border-radius:16px;padding:clamp(12px,3.5vw,18px);margin:0 0 12px;background:#fafafa}
+#dailySlipOverlay .ds-inc{border-color:#a7f3d0;background:#ecfdf5}
+#dailySlipOverlay .ds-exp{border-color:#fecdd3;background:#fff1f2}
+#dailySlipOverlay .ds-net{background:#fff7ed}
+#dailySlipOverlay .ds-label{font-size:clamp(13px,3.5vw,15px);font-weight:600;color:#374151;margin-bottom:4px}
+#dailySlipOverlay .ds-pct-inline{font-weight:700;color:#be123c;font-size:clamp(12px,3.2vw,14px)}
+#dailySlipOverlay .ds-amt{font-size:clamp(28px,9vw,40px);font-weight:800;letter-spacing:-0.02em;line-height:1.15;font-variant-numeric:tabular-nums}
+#dailySlipOverlay .ds-inc .ds-amt{color:#047857}
+#dailySlipOverlay .ds-exp .ds-amt{color:#be123c}
+#dailySlipOverlay .ds-pct{font-size:clamp(16px,4.5vw,20px);font-weight:700;margin-top:8px}
+#dailySlipOverlay .ds-pct-sub{font-size:clamp(13px,3.5vw,15px);color:#6b7280;margin-top:4px;font-weight:600}
+#dailySlipOverlay .ds-meta{font-size:clamp(12px,3.2vw,13px);color:#6b7280;margin-top:8px}
+#dailySlipOverlay .ds-actions{display:flex;gap:10px;padding:12px 16px calc(12px + env(safe-area-inset-bottom,0));border-top:1px solid #eee;flex-shrink:0;background:#fff}
+#dailySlipOverlay .ds-btn{flex:1;padding:14px 12px;border-radius:14px;font-size:clamp(14px,3.8vw,16px);font-weight:700;border:0;cursor:pointer;font-family:inherit}
+#dailySlipOverlay .ds-btn-print{background:#ea580c;color:#fff}
+#dailySlipOverlay .ds-btn-close2{background:#f3f4f6;color:#374151}
+@media print{
+  body > *:not(#dailySlipOverlay){display:none!important}
+  #dailySlipOverlay{position:static}
+  #dailySlipOverlay .ds-backdrop{background:#fff;padding:0}
+  #dailySlipOverlay .ds-sheet{box-shadow:none;max-width:100%;height:auto;max-height:none;border-radius:0}
+  #dailySlipOverlay .ds-header,#dailySlipOverlay .ds-actions,#dailySlipOverlay .ds-close{display:none!important}
+  #dailySlipOverlay .ds-body{padding:12mm}
+  #dailySlipOverlay .ds-amt{font-size:28pt}
+}
+`;
+      // replace previous style
+      const oldStyle = document.getElementById('dailySlipStyle');
+      if (oldStyle) oldStyle.remove();
+      document.head.appendChild(style);
+      document.body.appendChild(overlay);
+      document.body.style.overflow = 'hidden';
+
+      const close = () => {
+        overlay.remove();
+        document.body.style.overflow = '';
+      };
+      overlay.querySelector('.ds-close').addEventListener('click', close);
+      overlay.querySelector('.ds-btn-close2').addEventListener('click', close);
+      overlay.querySelector('.ds-backdrop').addEventListener('click', (e) => {
+        if (e.target === overlay.querySelector('.ds-backdrop')) close();
+      });
+      overlay.querySelector('.ds-btn-print').addEventListener('click', () => {
+        window.print();
+      });
     };
 
     // ----- Weekly backup reminder -----
