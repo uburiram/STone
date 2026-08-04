@@ -172,10 +172,17 @@
     window.ensureTransactionsLoaded = async function(force) {
       if (!window.SomtumStore || !SomtumStore.getTxByDateRange) return;
       const bounds = window.getFilterDateBounds();
-      // Also include calendar month when viewing calendar
       let start = bounds.start;
       let end = bounds.end;
-      if (typeof calendarCurrentDate !== 'undefined' && calendarCurrentDate) {
+
+      // IMPORTANT:
+      // - filter "all" => start/end are null => must load EVERY transaction (unbounded).
+      // - Do NOT shrink unbounded range to the visible calendar month
+      //   (that bug made KPI "ทั้งหมด" only count the calendar month).
+      // - When range is already bounded (daily/weekly/month/…), expand to also
+      //   cover the month shown on the calendar so the calendar grid is complete.
+      const isUnbounded = (start == null && end == null);
+      if (!isUnbounded && typeof calendarCurrentDate !== 'undefined' && calendarCurrentDate) {
         const cy = calendarCurrentDate.getFullYear();
         const cm = calendarCurrentDate.getMonth();
         const cStart = cy + '-' + String(cm + 1).padStart(2, '0') + '-01';
@@ -184,10 +191,12 @@
         if (!start || cStart < start) start = cStart;
         if (!end || cEnd > end) end = cEnd;
       }
+
       const same = window.__loadedRange && window.__loadedRange.start === start && window.__loadedRange.end === end;
       if (same && window.__txCacheLoaded && !force) return;
 
       try {
+        // null,null => getAll via openCursor (see storage.getTxByDateRange)
         const list = await SomtumStore.getTxByDateRange(start, end);
         window.appData.transactions = list || [];
         window.__loadedRange = { start: start, end: end };
