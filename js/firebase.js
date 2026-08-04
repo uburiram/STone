@@ -859,6 +859,7 @@ const firebaseConfig = {
     };
 
     // saveLocalOnly: meta + flags only (transactions already in IDB per-record)
+    // Overrides the early stub in app.js once this module has loaded.
     window.saveLocalOnly = function() {
       try {
         if (window.SomtumStore && SomtumStore.persistAppState) {
@@ -866,9 +867,13 @@ const firebaseConfig = {
           SomtumStore.persistAppState(window.appData, { writeAllTx: false }).catch(function(e) {
             console.error('persistAppState', e);
           });
-        } else {
+        } else if (window.SomtumStore && SomtumStore.setItem) {
           // Fallback legacy path
-          SomtumStore.setItem('somtumAppData', JSON.stringify(window.appData));
+          try {
+            SomtumStore.setItem('somtumAppData', JSON.stringify(window.appData));
+          } catch (e2) {
+            console.error('legacy setItem appData failed', e2);
+          }
         }
         if (!navigator.onLine && window.currentUser) {
           SomtumStore.setItem('somtumHasUnsyncedData', 'true');
@@ -880,6 +885,6 @@ const firebaseConfig = {
         }
       } catch (e) {
         console.error("saveLocalOnly failed:", e);
-        throw e;
+        // Do not throw — callers already handle local save failures at putTx level
       }
     };

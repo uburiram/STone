@@ -143,8 +143,13 @@
   }
 
   function enqueue(fn) {
+    // Keep the queue alive after errors; record last failure for diagnostics
     writeQueue = writeQueue.then(fn).catch((e) => {
       console.error('[SomtumStore] write queue error', e);
+      try {
+        memoryKv['__lastWriteError'] = String((e && e.message) || e || 'unknown');
+        memoryKv['__lastWriteErrorAt'] = new Date().toISOString();
+      } catch (e2) { /* ignore */ }
     });
     return writeQueue;
   }

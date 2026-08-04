@@ -25,6 +25,60 @@
       return str.replace(/[&<>'"]/g, tag => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
       }[tag]));
+    };
+
+    /** Escape for single-quoted HTML attribute / inline JS string contexts */
+    window.escapeAttr = function(str) {
+      return String(str == null ? '' : str)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, ' ')
+        .replace(/\r/g, '');
+    };
+
+    /**
+     * Boot gate: prevent saves / destructive writes until SomtumStore.init + first hydrate finish.
+     * Stops empty-state overwrite races on cold start / auth restore.
+     */
+    window.__storeReady = false;
+    window.__bootPromise = null;
+    window.whenStoreReady = function() {
+      if (window.__storeReady) return Promise.resolve(true);
+      return new Promise(function(resolve) {
+        if (window.__storeReady) { resolve(true); return; }
+        var done = function() { resolve(true); };
+        window.addEventListener('somtum-store-ready', done, { once: true });
+        // Safety timeout so UI never hangs forever if IDB is blocked
+        setTimeout(function() {
+          if (!window.__storeReady) {
+            console.warn('[boot] store ready timeout — allowing limited operation');
+            window.__storeReady = true;
+          }
+          resolve(true);
+        }, 8000);
+      });
+    };
+
+    /** Early stub: real implementation is assigned by firebase.js module when it loads */
+    if (typeof window.saveLocalOnly !== 'function') {
+      window.saveLocalOnly = function() {
+        try {
+          if (window.SomtumStore && typeof SomtumStore.persistAppState === 'function') {
+            SomtumStore.persistAppState(window.appData, { writeAllTx: false }).catch(function(e) {
+              console.error('persistAppState (stub)', e);
+            });
+          } else if (window.SomtumStore && typeof SomtumStore.setItem === 'function') {
+            try {
+              SomtumStore.setItem('somtumAppData', JSON.stringify(window.appData));
+            } catch (e2) { console.error(e2); }
+          }
+        } catch (e) {
+          console.error('saveLocalOnly stub failed:', e);
+        }
+      };
     }
 
     window.DEFAULT_CATEGORIES = {
@@ -238,29 +292,37 @@
 
     window.__hydrateAppDataFromStore = function(preferRicher) {
       // Sync path: try meta + optional legacy blob only for structure defaults
+      // NEVER replace a non-empty in-memory tx list with empty (race protection)
       try {
-        // Prefer structured meta when available via cached memory after init
-        // Full async hydrate happens in __hydrateAppDataFromStoreAsync
         const savedData = SomtumStore.getItem('somtumAppData');
         if (savedData) {
           const parsed = window.sanitizeAppData(JSON.parse(savedData));
-          if (preferRicher && window.appData && Array.isArray(window.appData.transactions)) {
-            const memLen = window.appData.transactions.length;
-            const diskLen = (parsed.transactions || []).length;
-            if (diskLen >= memLen) {
-              // Keep categories/settings from legacy; txs will be replaced by IDB range load
-              window.appData.categories = parsed.categories;
-              window.appData.materials = parsed.materials;
-              window.appData.equipments = parsed.equipments;
-              window.appData.customGoal = parsed.customGoal;
-              if (!window.__txCacheLoaded) window.appData.transactions = parsed.transactions;
-            }
-          } else {
+          const memLen = (window.appData && Array.isArray(window.appData.transactions))
+            ? window.appData.transactions.length : 0;
+          const diskLen = (parsed.transactions || []).length;
+          const applyMeta = function() {
             window.appData.categories = parsed.categories;
             window.appData.materials = parsed.materials;
             window.appData.equipments = parsed.equipments;
             window.appData.customGoal = parsed.customGoal;
-            if (!window.__txCacheLoaded) window.appData.transactions = parsed.transactions || [];
+            if (parsed.customGoalPercent !== undefined) {
+              window.appData.customGoalPercent = parsed.customGoalPercent;
+            }
+          };
+          if (preferRicher && memLen > 0) {
+            if (diskLen >= memLen) {
+              applyMeta();
+              if (!window.__txCacheLoaded) window.appData.transactions = parsed.transactions;
+            } else {
+              // Keep richer memory txs; still take categories if present
+              if (parsed.categories) window.appData.categories = parsed.categories;
+            }
+          } else {
+            applyMeta();
+            // Only adopt disk txs when memory is empty / not yet loaded from IDB
+            if (!window.__txCacheLoaded && (memLen === 0 || diskLen >= memLen)) {
+              window.appData.transactions = parsed.transactions || [];
+            }
           }
         } else if (!window.appData || !Array.isArray(window.appData.transactions)) {
           window.appData = window.sanitizeAppData(window.appData || {});
@@ -282,6 +344,7 @@
             if (meta.materials) window.appData.materials = meta.materials;
             if (meta.equipments) window.appData.equipments = meta.equipments;
             if (meta.customGoal !== undefined) window.appData.customGoal = meta.customGoal;
+            if (meta.customGoalPercent !== undefined) window.appData.customGoalPercent = meta.customGoalPercent;
             window.appData = window.sanitizeAppData(window.appData);
           }
         }
@@ -289,7 +352,11 @@
         let n = SomtumStore.countTx ? await SomtumStore.countTx() : 0;
         if (n > 0 && SomtumStore.getAllTx) {
           const all = await SomtumStore.getAllTx();
-          window.appData.transactions = all || [];
+          // Do not clobber a richer in-memory list (e.g. just-added tx before IDB flush)
+          const memLen = (window.appData.transactions || []).length;
+          if (!window.__txCacheLoaded || (all && all.length >= memLen)) {
+            window.appData.transactions = all || [];
+          }
           window.__txCacheLoaded = true;
           window.__loadedRange = { start: null, end: null };
         } else {
@@ -315,21 +382,49 @@
       } catch (e) {
         console.error('async hydrate failed', e);
         window.__hydrateAppDataFromStore(true);
+      } finally {
+        window.__storeReady = true;
+        try {
+          window.dispatchEvent(new CustomEvent('somtum-app-hydrated'));
+        } catch (ev) { /* */ }
       }
+    };
+
+    /** Always load full tx set from IDB for bulk ops (export / rename / force sync) */
+    window.loadAllTransactions = async function() {
+      if (window.SomtumStore && typeof SomtumStore.getAllTx === 'function') {
+        try {
+          const all = await SomtumStore.getAllTx();
+          if (Array.isArray(all)) {
+            window.appData.transactions = all;
+            window.__txCacheLoaded = true;
+            window.__loadedRange = { start: null, end: null };
+            return all;
+          }
+        } catch (e) {
+          console.warn('loadAllTransactions', e);
+        }
+      }
+      return window.appData.transactions || [];
     };
 
     window.__hydrateAppDataFromStore(false);
 
     // After IDB migration, load meta + range (not full blob into RAM forever)
     if (window.SomtumStore && typeof window.SomtumStore.init === 'function') {
-      window.SomtumStore.init().then(async function () {
+      window.__bootPromise = window.SomtumStore.init().then(async function () {
         await window.__hydrateAppDataFromStoreAsync();
         if (typeof window.refreshDashboard === 'function' && document.getElementById('kpiTotalIncome')) {
           try { await window.refreshDashboard(); } catch (e) { /* UI may not be ready */ }
         }
+        return true;
       }).catch(function (e) {
         console.warn('SomtumStore.init from app.js:', e);
+        window.__storeReady = true;
+        return false;
       });
+    } else {
+      window.__storeReady = true;
     }
 
     window.getLocalYYYYMMDD = function(dateObj = new Date()) {
@@ -665,7 +760,7 @@
           
           const itemsHtml = subData.items.map(it => {
             const isInc = it.type === 'income';
-            const safeId = String(it.id).replace(/'/g, "\\'");
+            const safeId = window.escapeAttr(it.id);
             return `
               <div class="flex justify-between items-center py-1.5 px-2.5 text-xs bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 my-1 shadow-2xs cursor-pointer hover:border-brand-300 transition-all" onclick="editTransaction('${safeId}')" title="แตะเพื่อแก้ไข">
                 <div class="flex flex-col">
@@ -815,7 +910,12 @@
 
     window.safeCalculate = function(expr) {
       if (!expr) return 0;
-      let cleaned = expr.replace(/x/gi, '*').replace(/÷/g, '/').replace(/\s+/g, '');
+      // Support × (U+00D7), x/X, ÷ as multiply/divide
+      let cleaned = String(expr)
+        .replace(/×/g, '*')
+        .replace(/x/gi, '*')
+        .replace(/÷/g, '/')
+        .replace(/\s+/g, '');
       if (!/^[0-9+\-*/().]+$/.test(cleaned)) return NaN;
       try {
         let rawTokens = cleaned.match(/(\d+(?:\.\d+)?|[+\-*/()])/g);
@@ -1014,6 +1114,10 @@
 
     window.handleFormSubmit = async function(e) {
       e.preventDefault();
+      // Wait for store hydrate so we never persist against empty/partial state on cold start
+      if (typeof window.whenStoreReady === 'function') {
+        try { await window.whenStoreReady(); } catch (w) { /* proceed with best effort */ }
+      }
       calculateAmount();
       const amountVal = Number(document.getElementById('txAmount').value);
       if (isNaN(amountVal) || amountVal <= 0) {
@@ -1028,7 +1132,15 @@
       const note = document.getElementById('txNote').value.trim();
       const editId = document.getElementById('editTxId').value;
 
-      const catObj = window.appData.categories[type].find(c => c.name === category);
+      // Validate date format before save
+      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        alert('กรุณาเลือกวันที่ให้ถูกต้อง');
+        return;
+      }
+
+      const catObj = (window.appData.categories && window.appData.categories[type])
+        ? window.appData.categories[type].find(c => c.name === category)
+        : null;
       let subCategory = '';
 
       if (catObj && (catObj.flags?.isMaterialCategory || catObj.flags?.isEquipmentCategory)) {
@@ -1046,6 +1158,7 @@
       if(editId) {
         const idx = window.appData.transactions.findIndex(t => t.id === editId);
         if(idx > -1) window.appData.transactions[idx] = txObj;
+        else window.appData.transactions.push(txObj);
       } else {
         window.appData.transactions.push(txObj);
       }
@@ -1690,6 +1803,10 @@
           return;
         }
         cat.name = trimmed;
+        // Bulk ops must see full dataset, not only current filter cache
+        if (typeof window.loadAllTransactions === 'function') {
+          try { await window.loadAllTransactions(); } catch (e) { console.warn(e); }
+        }
         let updatedCount = 0;
         for (const tx of (window.appData.transactions || [])) {
           if (tx.type === managerType && tx.category === oldName) {
@@ -1743,6 +1860,9 @@
           return;
         }
         cat.subs[j] = trimmed;
+        if (typeof window.loadAllTransactions === 'function') {
+          try { await window.loadAllTransactions(); } catch (e) { console.warn(e); }
+        }
         let updatedCount = 0;
         for (const tx of (window.appData.transactions || [])) {
           if (tx.type !== managerType || tx.category !== cat.name) continue;
@@ -1916,6 +2036,9 @@
           return;
         }
         arr[idx] = trimmed;
+        if (typeof window.loadAllTransactions === 'function') {
+          try { await window.loadAllTransactions(); } catch (e) { console.warn(e); }
+        }
         let updatedCount = 0;
         for (const tx of (window.appData.transactions || [])) {
           if (!tx.subCategory) continue;
@@ -2125,11 +2248,23 @@
         }
         const dataStr = JSON.stringify(data);
         const hash = simpleContentHash(dataStr);
-        if (hash !== lastAutoBackupHash) {
-          SomtumStore.setItem('somtumAutoBackup', dataStr);
-          SomtumStore.setItem('somtumAutoBackupTime', new Date().toISOString());
-          if (window.currentUser) SomtumStore.setItem('somtumAutoBackupUid', window.currentUser.uid);
-          lastAutoBackupHash = hash;
+        if (hash === lastAutoBackupHash) return;
+        // Respect LS size guard used by SomtumStore (avoid silent quota failures)
+        const maxChars = (window.SomtumStore && SomtumStore.LS_APPDATA_MAX_CHARS)
+          ? SomtumStore.LS_APPDATA_MAX_CHARS
+          : 400000;
+        if (dataStr.length > maxChars) {
+          // Still try IDB-only path via setItem (storage skips oversized LS mirror)
+          console.warn('[autoBackup] large payload', dataStr.length, 'chars — IDB/kv only');
+        }
+        SomtumStore.setItem('somtumAutoBackup', dataStr);
+        SomtumStore.setItem('somtumAutoBackupTime', new Date().toISOString());
+        if (window.currentUser) SomtumStore.setItem('somtumAutoBackupUid', window.currentUser.uid);
+        lastAutoBackupHash = hash;
+        // Verify read-back for critical recovery path
+        const check = SomtumStore.getItem('somtumAutoBackup');
+        if (!check && dataStr.length <= maxChars) {
+          console.warn('[autoBackup] write verification failed (quota?)');
         }
       } catch (e) { console.warn('Auto backup failed', e); }
     };
