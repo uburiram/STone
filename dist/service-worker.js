@@ -1,5 +1,5 @@
-/* Somtum Service Worker - offline shell cache */
-const CACHE_NAME = 'somtum-v6';
+/* Somtum Service Worker - network-first for app files (auth-safe) */
+const CACHE_NAME = 'somtum-v14';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -33,41 +33,63 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+function isAuthOrFirebase(url) {
+  const h = url.hostname;
+  return (
+    h.includes('googleapis.com') ||
+    h.includes('firebaseio.com') ||
+    h.includes('firebaseapp.com') ||
+    h.includes('firebasestorage.') ||
+    h.includes('identitytoolkit.googleapis.com') ||
+    h.includes('securetoken.googleapis.com') ||
+    h.includes('gstatic.com') ||
+    h.includes('accounts.google.com') ||
+    h.includes('google.com')
+  );
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);
-  const isFirebase = url.hostname.includes('googleapis.com') ||
-    url.hostname.includes('firebaseio.com') ||
-    url.hostname.includes('firestore.googleapis.com') ||
-    url.hostname.includes('identitytoolkit.googleapis.com') ||
-    url.hostname.includes('securetoken.googleapis.com') ||
-    url.hostname.includes('gstatic.com');
+  if (isAuthOrFirebase(url)) return; // never intercept Google/Firebase auth traffic
 
-  if (isFirebase) return;
+  // Network-first for HTML + own JS so auth/login fixes deploy immediately
+  const isAppShell =
+    req.mode === 'navigate' ||
+    url.pathname.endsWith('.html') ||
+    url.pathname.includes('/js/') ||
+    url.pathname.endsWith('service-worker.js');
 
+  if (isAppShell) {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.status === 200) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(() => caches.match(req).then((c) => c || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  // Cache-first for CDN static assets
   event.respondWith(
     caches.match(req).then((cached) => {
-      const fetchPromise = fetch(req).then((res) => {
-        if (res && res.status === 200) {
-          const clone = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => {});
-        }
-        return res;
-      }).catch(() => cached);
-
-      if (req.mode === 'navigate') {
-        return fetchPromise.then((res) => res || cached || caches.match('./index.html') || caches.match('./'));
-      }
+      const fetchPromise = fetch(req)
+        .then((res) => {
+          if (res && res.status === 200) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(() => cached);
       return cached || fetchPromise;
     })
   );
-});
-
-// Allow page to force activate new SW
-self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
-  }
 });
