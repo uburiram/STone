@@ -167,37 +167,38 @@ const firebaseConfig = {
     };
 
     window.logoutGoogle = async function() {
-      window.showConfirmModal("ยืนยันการออกจากระบบ", "ข้อมูลของบัญชีนี้จะถูกลบออกจากเครื่องเพื่อความปลอดภัย และระบบจะสลับเป็นโหมดใช้งานทั่วไป", async () => {
+      window.showConfirmModal(
+        "ยืนยันการออกจากระบบ",
+        "ระบบจะสลับเป็นโหมดใช้งานทั่วไป\n\nข้อมูลของบัญชีนี้ยังถูกเก็บแยกไว้ในเครื่อง (ไม่ปนกับร้านอื่น) เมื่อล็อกอินบัญชีเดิมอีกครั้งจะโหลดกลับมาอัตโนมัติ",
+        async () => {
         try {
           if (window.unsubTransactions) { window.unsubTransactions(); window.unsubTransactions = null; }
           if (window.unsubSettings) { window.unsubSettings(); window.unsubSettings = null; }
           await signOut(auth);
-          // Clear IDB structured stores + LS flags (privacy: no leftover txs)
-          if (SomtumStore.clearAllUserData) {
+          // Approach A: do NOT wipe the account DB — switch to isolated guest scope
+          if (SomtumStore.switchScope) {
+            await SomtumStore.switchScope(null);
+          } else if (SomtumStore.clearAllUserData) {
             await SomtumStore.clearAllUserData();
-          } else {
-            SomtumStore.removeItem('somtumAppData');
-            SomtumStore.removeItem('somtumLastSyncedTimestamp');
-            SomtumStore.removeItem('somtumHasUnsyncedData');
-            SomtumStore.removeItem('somtumDataOwnerUid');
-            SomtumStore.removeItem('somtumAutoBackup');
-            SomtumStore.removeItem('somtumAutoBackupTime');
-            SomtumStore.removeItem('somtumAutoBackupUid');
-            SomtumStore.removeItem('somtumLastGoalNotified');
           }
           if (typeof lastAutoBackupHash !== 'undefined') lastAutoBackupHash = '';
-          window.appData = {
-            transactions: [],
-            categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
-            materials: [...window.DEFAULT_MATERIALS],
-            equipments: [...window.DEFAULT_EQUIPMENTS],
-            customGoal: null,
-            customGoalPercent: null
-          };
           window.__txCacheLoaded = false;
           window.__loadedRange = { start: null, end: null };
-          window.refreshDashboard();
-          window.showToast('ออกจากระบบแล้ว');
+          // Load guest-scope data (may be empty or prior guest entries)
+          if (typeof window.__hydrateAppDataFromStoreAsync === 'function') {
+            await window.__hydrateAppDataFromStoreAsync();
+          } else {
+            window.appData = {
+              transactions: [],
+              categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
+              materials: [...window.DEFAULT_MATERIALS],
+              equipments: [...window.DEFAULT_EQUIPMENTS],
+              customGoal: null,
+              customGoalPercent: null
+            };
+          }
+          if (typeof window.refreshDashboard === 'function') window.refreshDashboard();
+          window.showToast('ออกจากระบบแล้ว — โหมดใช้งานทั่วไป');
         } catch (error) {
           console.error("Logout failed:", error);
         }
@@ -221,53 +222,82 @@ const firebaseConfig = {
         btnLogin.classList.add('hidden');
         btnLogout.classList.remove('hidden');
 
-        // Safety: classic script may not have finished early-load yet if module
-        // ran first. Re-hydrate from localStorage before guest-merge decision.
+        // Snapshot guest-scope data BEFORE switching (for optional merge prompt)
+        let guestSnapshot = null;
         try {
-          // Prefer full IDB history for guest-merge decision (not just current filter range)
-          if (SomtumStore.getAllTx) {
-            const all = await SomtumStore.getAllTx();
-            if (all && all.length) {
-              window.appData.transactions = all;
+          const wasGuest = !SomtumStore.activeScope || SomtumStore.activeScope === 'guest';
+          if (wasGuest) {
+            let guestTx = [];
+            if (SomtumStore.getAllTx) guestTx = await SomtumStore.getAllTx();
+            const guestMeta = SomtumStore.getMeta ? await SomtumStore.getMeta() : null;
+            if ((guestTx && guestTx.length) || (guestMeta && guestMeta.categories)) {
+              guestSnapshot = {
+                transactions: guestTx || [],
+                categories: (guestMeta && guestMeta.categories) || (window.appData && window.appData.categories) || JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
+                materials: (guestMeta && guestMeta.materials) || (window.appData && window.appData.materials) || [...window.DEFAULT_MATERIALS],
+                equipments: (guestMeta && guestMeta.equipments) || (window.appData && window.appData.equipments) || [...window.DEFAULT_EQUIPMENTS],
+                customGoal: guestMeta && guestMeta.customGoal != null ? guestMeta.customGoal : (window.appData && window.appData.customGoal) || null,
+                customGoalPercent: guestMeta && guestMeta.customGoalPercent != null ? guestMeta.customGoalPercent : (window.appData && window.appData.customGoalPercent) || null
+              };
             }
           }
-          if (SomtumStore.getMeta) {
-            const meta = await SomtumStore.getMeta();
-            if (meta) {
-              if (meta.categories) window.appData.categories = meta.categories;
-              if (meta.materials) window.appData.materials = meta.materials;
-              if (meta.equipments) window.appData.equipments = meta.equipments;
-              if (meta.customGoal !== undefined) window.appData.customGoal = meta.customGoal;
-              if (meta.customGoalPercent !== undefined) window.appData.customGoalPercent = meta.customGoalPercent;
-            }
+        } catch (snapErr) {
+          console.warn('guest snapshot failed', snapErr);
+        }
+
+        // Approach A: open isolated IDB for this uid (does not touch guest / other uids)
+        try {
+          if (SomtumStore.switchScope) {
+            await SomtumStore.switchScope(user.uid);
+          } else {
+            SomtumStore.setItem('somtumDataOwnerUid', user.uid);
           }
-          const raw = SomtumStore.getItem('somtumAppData');
-          if (raw && typeof window.sanitizeAppData === 'function') {
-            const parsed = window.sanitizeAppData(JSON.parse(raw));
-            const memLen = (window.appData && window.appData.transactions) ? window.appData.transactions.length : 0;
-            const diskLen = (parsed.transactions || []).length;
-            if (diskLen > memLen) {
-              window.appData = parsed;
-            } else if (!window.appData || !Array.isArray(window.appData.transactions)) {
-              window.appData = parsed;
+        } catch (scopeErr) {
+          console.error('switchScope failed', scopeErr);
+        }
+
+        window.__txCacheLoaded = false;
+        window.__loadedRange = { start: null, end: null };
+
+        // Hydrate from THIS user's scope only
+        try {
+          if (typeof window.__hydrateAppDataFromStoreAsync === 'function') {
+            await window.__hydrateAppDataFromStoreAsync();
+          } else {
+            if (SomtumStore.getAllTx) {
+              const all = await SomtumStore.getAllTx();
+              if (all) window.appData.transactions = all;
             }
+            if (SomtumStore.getMeta) {
+              const meta = await SomtumStore.getMeta();
+              if (meta) {
+                if (meta.categories) window.appData.categories = meta.categories;
+                if (meta.materials) window.appData.materials = meta.materials;
+                if (meta.equipments) window.appData.equipments = meta.equipments;
+                if (meta.customGoal !== undefined) window.appData.customGoal = meta.customGoal;
+                if (meta.customGoalPercent !== undefined) window.appData.customGoalPercent = meta.customGoalPercent;
+              }
+            }
+            window.appData = window.sanitizeAppData(window.appData || {});
           }
-          window.appData = window.sanitizeAppData(window.appData || {});
         } catch (e) {
           console.warn('Auth hydrate failed:', e);
         }
 
-        const lastOwnerUid = SomtumStore.getItem('somtumDataOwnerUid');
-        const localTransactions = (window.appData && window.appData.transactions) || [];
+        const userTxCount = (window.appData && window.appData.transactions)
+          ? window.appData.transactions.length
+          : 0;
+        const guestTxCount = guestSnapshot && guestSnapshot.transactions
+          ? guestSnapshot.transactions.length
+          : 0;
 
-        if (lastOwnerUid === user.uid) {
-          window.initFirestoreListeners();
-        } else if (localTransactions.length > 0) {
-          pendingGuestData = JSON.parse(JSON.stringify(window.appData));
-          // Hide backup remind if open so both z-[95] modals don't stack
+        // Merge prompt only when: user scope is empty AND guest had local data
+        if (userTxCount === 0 && guestTxCount > 0) {
+          pendingGuestData = JSON.parse(JSON.stringify(guestSnapshot));
           const bakModal = document.getElementById('backupRemindModal');
           if (bakModal) bakModal.classList.add('hidden');
-          document.getElementById('guestMergeModal').classList.remove('hidden');
+          const mergeModal = document.getElementById('guestMergeModal');
+          if (mergeModal) mergeModal.classList.remove('hidden');
         } else {
           SomtumStore.setItem('somtumDataOwnerUid', user.uid);
           window.initFirestoreListeners();
@@ -280,6 +310,21 @@ const firebaseConfig = {
         btnLogin.classList.remove('hidden');
         btnLogout.classList.add('hidden');
         document.getElementById('btnSyncNow').classList.add('hidden');
+
+        // Ensure guest scope is active when signed out (e.g. session expired)
+        try {
+          if (SomtumStore.switchScope && SomtumStore.activeScope !== 'guest') {
+            await SomtumStore.switchScope(null);
+            window.__txCacheLoaded = false;
+            window.__loadedRange = { start: null, end: null };
+            if (typeof window.__hydrateAppDataFromStoreAsync === 'function') {
+              await window.__hydrateAppDataFromStoreAsync();
+            }
+            if (typeof window.refreshDashboard === 'function') window.refreshDashboard();
+          }
+        } catch (e) {
+          console.warn('guest scope restore failed', e);
+        }
       }
     });
 

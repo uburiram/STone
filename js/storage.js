@@ -1,16 +1,24 @@
 /**
- * SomtumStore v2 — IndexedDB per-transaction store + safe legacy migration.
+ * SomtumStore v2.1 — IndexedDB per-transaction store + per-account scopes.
  *
  * Goals:
  *  - Do NOT require loading one giant JSON blob for normal use
  *  - Stop dual-writing full appData into localStorage (Quota bottleneck)
  *  - Track dirty/deleted tx ids for incremental cloud sync
  *  - Never drop existing localStorage / v1 IDB data without migrating first
+ *  - Isolate data per account (uid) vs guest so multi-shop on one phone is safe
+ *
+ * Scope model (Approach A):
+ *  - activeScope = 'guest' | <firebase uid>
+ *  - guest uses legacy DB name `somtum-idb-v2` (keeps existing single-user data)
+ *  - logged-in user uses `somtum-idb-v2-u-<uid>`
+ *  - localStorage dual-write for user scopes is prefixed `somtum@<uid>:...`
+ *  - guest keeps unprefixed LS keys for backward compatibility
+ *  - somtumDarkMode is global (shared across scopes)
  */
 (function (global) {
   'use strict';
 
-  const DB_NAME = 'somtum-idb-v2';
   const DB_VERSION = 1;
   const STORE_META = 'meta';
   const STORE_TX = 'tx';
@@ -21,7 +29,9 @@
   const FLAG_DIRTY = '__dirty_tx_ids';
   const FLAG_DELETED = '__deleted_tx_ids';
   const FLAG_META_DIRTY = '__meta_dirty';
+  const SCOPE_POINTER_KEY = 'somtumActiveScope';
 
+  /** Keys that dual-write to localStorage (small flags only) */
   const SMALL_LS_KEYS = new Set([
     'somtumHasUnsyncedData',
     'somtumLastSyncedTimestamp',
@@ -33,6 +43,9 @@
     'somtumAutoBackupTime'
   ]);
 
+  /** Never namespace these — UI prefs / pointers shared on the device */
+  const GLOBAL_LS_KEYS = new Set(['somtumDarkMode', 'somtumActiveScope', 'somtumDataOwnerUid']);
+
   const LS_APPDATA_MAX_CHARS = 400000;
 
   const memoryKv = Object.create(null);
@@ -41,10 +54,26 @@
   let writeQueue = Promise.resolve();
   let lsWriteFailures = 0;
   let txCountCache = null;
+  /** @type {string} 'guest' or Firebase uid */
+  let activeScope = 'guest';
 
-  function openDB() {
+  function dbNameForScope(scope) {
+    if (!scope || scope === 'guest') return 'somtum-idb-v2';
+    return 'somtum-idb-v2-u-' + String(scope);
+  }
+
+  /** Map logical key → localStorage key for current scope */
+  function lsKeyFor(key) {
+    if (GLOBAL_LS_KEYS.has(key)) return key;
+    if (activeScope === 'guest') return key;
+    // user scope: prefix to avoid clobbering guest / other accounts
+    return 'somtum@' + activeScope + ':' + key;
+  }
+
+  function openDB(scope) {
+    const name = dbNameForScope(scope || activeScope);
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      const req = indexedDB.open(name, DB_VERSION);
       req.onupgradeneeded = (e) => {
         const database = e.target.result;
         if (!database.objectStoreNames.contains(STORE_META)) {
@@ -96,21 +125,21 @@
     return idbOp(STORE_KV, 'readwrite', (s) => s.delete(key));
   }
 
-  function safeLSGet(key) {
-    try { return localStorage.getItem(key); } catch (e) { return null; }
+  function safeLsGet(logicalKey) {
+    try { return localStorage.getItem(lsKeyFor(logicalKey)); } catch (e) { return null; }
   }
-  function safeLSSet(key, value) {
+  function safeLsSet(logicalKey, value) {
     try {
-      localStorage.setItem(key, value);
+      localStorage.setItem(lsKeyFor(logicalKey), value);
       return true;
     } catch (e) {
       lsWriteFailures++;
-      console.warn('[SomtumStore] LS write failed', key, e && e.name);
+      console.warn('[SomtumStore] LS write failed', logicalKey, e && e.name);
       return false;
     }
   }
-  function safeLSRemove(key) {
-    try { localStorage.removeItem(key); } catch (e) { /* ignore */ }
+  function safeLsRemove(logicalKey) {
+    try { localStorage.removeItem(lsKeyFor(logicalKey)); } catch (e) { /* ignore */ }
   }
 
   function enqueue(fn) {
@@ -209,7 +238,8 @@
       categories: data.categories,
       materials: data.materials || [],
       equipments: data.equipments || [],
-      customGoal: data.customGoal != null ? data.customGoal : null
+      customGoal: data.customGoal != null ? data.customGoal : null,
+      customGoalPercent: data.customGoalPercent != null ? data.customGoalPercent : null
     };
     await setMeta(meta);
 
@@ -225,12 +255,28 @@
     return { tx: n, meta: true };
   }
 
+  /**
+   * Legacy migration only for guest scope (unprefixed LS + old shared DB).
+   * User scopes start clean or from their own prior session.
+   */
   async function migrateFromLegacy() {
+    if (activeScope !== 'guest') {
+      // User scope: only seed flags if empty; do not pull guest/legacy blobs
+      const migrated = await kvGet(FLAG_MIGRATED);
+      if (!migrated) {
+        await kvSet(FLAG_MIGRATED, new Date().toISOString());
+        memoryKv[FLAG_MIGRATED] = await kvGet(FLAG_MIGRATED);
+      }
+      txCountCache = await countTx();
+      console.info('[SomtumStore] scope=', activeScope, 'ready tx=', txCountCache);
+      return;
+    }
+
     const migrated = await kvGet(FLAG_MIGRATED);
     const existingCount = await countTx();
 
     const candidates = [];
-    const lsBlob = safeLSGet('somtumAppData');
+    const lsBlob = safeLsGet('somtumAppData');
     if (lsBlob) candidates.push({ src: 'localStorage', raw: lsBlob, score: scoreAppDataRaw(lsBlob) });
     const v1Blob = await openLegacyV1();
     if (v1Blob) candidates.push({ src: 'idb-v1', raw: v1Blob, score: scoreAppDataRaw(v1Blob) });
@@ -240,7 +286,6 @@
     candidates.sort((a, b) => b.score - a.score);
     const best = candidates[0];
 
-    // Always prefer richer legacy blob (idempotent put by id) — recovers empty/partial v2
     if (best && best.score >= 0) {
       try {
         const parsed = JSON.parse(best.raw);
@@ -261,9 +306,10 @@
     try {
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k && k.indexOf('somtum') === 0 && k !== 'somtumAppData' && k !== 'somtumAutoBackup') {
-          const v = safeLSGet(k);
-          if (v != null) {
+        if (k && k.indexOf('somtum') === 0 && k.indexOf('somtum@') !== 0 &&
+            k !== 'somtumAppData' && k !== 'somtumAutoBackup' && k !== SCOPE_POINTER_KEY) {
+          const v = safeLsGet(k) || localStorage.getItem(k);
+          if (v != null && SMALL_LS_KEYS.has(k)) {
             memoryKv[k] = v;
             await kvSet(k, v);
           }
@@ -274,12 +320,10 @@
     await kvSet(FLAG_MIGRATED, new Date().toISOString());
     memoryKv[FLAG_MIGRATED] = await kvGet(FLAG_MIGRATED);
     txCountCache = await countTx();
-    console.info('[SomtumStore] migration complete. tx=', txCountCache);
-    // seed dirty for first cloud upload after structural migrate
+    console.info('[SomtumStore] migration complete (guest). tx=', txCountCache);
     try {
       const seeded = await kvGet('__seed_dirty_v2');
       if (!seeded && txCountCache > 0) {
-        // deferred: SomtumStore.seedDirtyIfNeeded called from init after object ready
         memoryKv['__need_seed_dirty'] = '1';
       }
     } catch (e) { /* */ }
@@ -309,13 +353,57 @@
     await kvSet(FLAG_DELETED, raw);
   }
 
+  function clearMemoryKeepGlobal() {
+    const dark = memoryKv['somtumDarkMode'];
+    Object.keys(memoryKv).forEach((k) => { delete memoryKv[k]; });
+    if (dark != null) memoryKv['somtumDarkMode'] = dark;
+    txCountCache = null;
+  }
+
   const SomtumStore = {
     get isReady() { return ready; },
+    get activeScope() { return activeScope; },
+
+    /** Current IndexedDB database name for active scope */
+    get dbName() { return dbNameForScope(activeScope); },
+
+    /**
+     * Switch storage scope. Pass null/undefined/'guest' for guest, or Firebase uid.
+     * Closes previous IDB, opens target scope DB, migrates if guest.
+     * Does NOT delete the previous scope's data (Approach A).
+     */
+    async switchScope(uidOrNull) {
+      const next = (uidOrNull && String(uidOrNull)) || 'guest';
+      if (next === activeScope && ready && db) {
+        return true;
+      }
+      console.info('[SomtumStore] switchScope', activeScope, '→', next);
+      try {
+        await writeQueue;
+      } catch (e) { /* */ }
+      if (db) {
+        try { db.close(); } catch (e) { /* */ }
+        db = null;
+      }
+      ready = false;
+      clearMemoryKeepGlobal();
+      activeScope = next;
+      try {
+        safeLsSet(SCOPE_POINTER_KEY, activeScope);
+      } catch (e) { /* */ }
+      // Also keep a readable owner pointer for older code paths
+      if (activeScope === 'guest') {
+        try { localStorage.removeItem('somtumDataOwnerUid'); } catch (e) { /* */ }
+      } else {
+        try { localStorage.setItem('somtumDataOwnerUid', activeScope); } catch (e) { /* */ }
+      }
+      return this.init();
+    },
 
     async init() {
       if (ready && db) return true;
       try {
-        db = await openDB();
+        db = await openDB(activeScope);
         await migrateFromLegacy();
         const dirty = await kvGet(FLAG_DIRTY);
         if (dirty != null) memoryKv[FLAG_DIRTY] = String(dirty);
@@ -324,11 +412,17 @@
         const metaDirty = await kvGet(FLAG_META_DIRTY);
         if (metaDirty != null) memoryKv[FLAG_META_DIRTY] = String(metaDirty);
         SMALL_LS_KEYS.forEach((k) => {
-          const v = safeLSGet(k);
+          const v = safeLsGet(k);
           if (v != null) memoryKv[k] = v;
         });
+        // Global dark mode may live on unprefixed key always
+        if (memoryKv['somtumDarkMode'] == null) {
+          try {
+            const g = localStorage.getItem('somtumDarkMode');
+            if (g != null) memoryKv['somtumDarkMode'] = g;
+          } catch (e) { /* */ }
+        }
         if (memoryKv['__need_seed_dirty'] === '1' || !(await kvGet('__seed_dirty_v2'))) {
-          // call after methods exist — use internal helpers
           try {
             const seeded = await kvGet('__seed_dirty_v2');
             if (!seeded) {
@@ -354,15 +448,23 @@
           delete memoryKv['__need_seed_dirty'];
         }
         ready = true;
-        global.dispatchEvent(new CustomEvent('somtum-store-ready'));
+        // Persist owner marker inside this scope
+        if (activeScope !== 'guest') {
+          memoryKv['somtumDataOwnerUid'] = activeScope;
+          safeLsSet('somtumDataOwnerUid', activeScope);
+          await kvSet('somtumDataOwnerUid', activeScope).catch(() => {});
+        }
+        global.dispatchEvent(new CustomEvent('somtum-store-ready', {
+          detail: { scope: activeScope }
+        }));
         return true;
       } catch (e) {
         console.error('[SomtumStore] init failed, LS-only fallback', e);
         try {
-          for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i);
-            if (k && k.indexOf('somtum') === 0) memoryKv[k] = localStorage.getItem(k);
-          }
+          SMALL_LS_KEYS.forEach((k) => {
+            const v = safeLsGet(k);
+            if (v != null) memoryKv[k] = v;
+          });
         } catch (e2) { /* */ }
         ready = true;
         return false;
@@ -371,7 +473,7 @@
 
     getItem(key) {
       if (Object.prototype.hasOwnProperty.call(memoryKv, key)) return memoryKv[key];
-      const ls = safeLSGet(key);
+      const ls = safeLsGet(key);
       if (ls !== null) memoryKv[key] = ls;
       return ls;
     },
@@ -390,9 +492,9 @@
           }
         });
         if (str.length <= LS_APPDATA_MAX_CHARS) {
-          safeLSSet(key, str);
+          safeLsSet(key, str);
         } else {
-          safeLSRemove(key);
+          safeLsRemove(key);
           console.info('[SomtumStore] skipped LS appData mirror (size', str.length, ')');
         }
         return;
@@ -401,21 +503,25 @@
       if (key === 'somtumAutoBackup') {
         memoryKv[key] = str;
         enqueue(() => kvSet(key, str));
-        if (str.length <= LS_APPDATA_MAX_CHARS) safeLSSet(key, str);
-        else safeLSRemove(key);
+        if (str.length <= LS_APPDATA_MAX_CHARS) safeLsSet(key, str);
+        else safeLsRemove(key);
         return;
       }
 
       memoryKv[key] = str;
-      if (SMALL_LS_KEYS.has(key) || key.indexOf('somtum') === 0) {
-        safeLSSet(key, str);
+      if (SMALL_LS_KEYS.has(key) || key.indexOf('somtum') === 0 || key.indexOf('__') === 0) {
+        if (GLOBAL_LS_KEYS.has(key) || SMALL_LS_KEYS.has(key) || key === 'somtumAppData' || key === 'somtumAutoBackup') {
+          safeLsSet(key, str);
+        } else if (key.indexOf('somtum') === 0) {
+          safeLsSet(key, str);
+        }
       }
       if (db) enqueue(() => kvSet(key, str));
     },
 
     removeItem(key) {
       delete memoryKv[key];
-      safeLSRemove(key);
+      safeLsRemove(key);
       if (db) enqueue(() => kvDel(key));
     },
 
@@ -541,7 +647,8 @@
         categories: appData.categories,
         materials: appData.materials,
         equipments: appData.equipments,
-        customGoal: appData.customGoal
+        customGoal: appData.customGoal,
+        customGoalPercent: appData.customGoalPercent
       });
       if (opts.writeAllTx && Array.isArray(appData.transactions)) {
         for (let i = 0; i < appData.transactions.length; i++) {
@@ -559,19 +666,19 @@
         categories: meta.categories || (base && base.categories) || { income: [], expense: [] },
         materials: meta.materials || (base && base.materials) || [],
         equipments: meta.equipments || (base && base.equipments) || [],
-        customGoal: meta.customGoal != null ? meta.customGoal : (base && base.customGoal) || null
+        customGoal: meta.customGoal != null ? meta.customGoal : (base && base.customGoal) || null,
+        customGoalPercent: meta.customGoalPercent != null ? meta.customGoalPercent : (base && base.customGoalPercent) || null
       };
     },
 
     async flush() { await writeQueue; },
 
     /**
-     * Wipe all app data from IDB + critical LS keys (logout / reset).
-     * Keeps UI prefs like dark mode.
+     * Wipe all app data from the ACTIVE scope only (IDB + scoped LS keys).
+     * Keeps UI prefs like dark mode. Does not touch other accounts' DBs.
      */
     async clearAllUserData() {
       txCountCache = null;
-      // Clear tx store
       if (db) {
         await new Promise((resolve, reject) => {
           const tx = db.transaction(STORE_TX, 'readwrite');
@@ -594,17 +701,15 @@
       ];
       for (const k of wipeKeys) {
         delete memoryKv[k];
-        safeLSRemove(k);
+        safeLsRemove(k);
         if (db) {
           try { await kvDel(k); } catch (e) { /* */ }
         }
       }
-      // Keep FLAG_MIGRATED so empty IDB is not re-filled from deleted LS
       await kvSet(FLAG_MIGRATED, new Date().toISOString());
       memoryKv[FLAG_MIGRATED] = await kvGet(FLAG_MIGRATED);
     },
 
-    /** One-time: mark every local tx dirty so first soft-sync uploads after v2 migrate */
     async seedDirtyIfNeeded() {
       try {
         const seeded = memoryKv['__seed_dirty_v2'] || (await kvGet('__seed_dirty_v2'));
@@ -632,6 +737,8 @@
       return {
         ready,
         idb: !!db,
+        scope: activeScope,
+        dbName: dbNameForScope(activeScope),
         txCount: n,
         dirtyCount: dirty.length,
         deletedCount: deleted.length,
@@ -642,6 +749,8 @@
 
     _scoreAppDataRaw: scoreAppDataRaw,
     _parseDirtyList: parseDirtyList,
+    _dbNameForScope: dbNameForScope,
+    _lsKeyFor: lsKeyFor,
     LS_APPDATA_MAX_CHARS
   };
 
