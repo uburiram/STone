@@ -412,8 +412,11 @@
 
     function createDynamicManifest() {
       const manifest = {
-        name: "ส้มตำนายหนึ่ง",
-        short_name: "ส้มตำนายหนึ่ง",
+        // name = ชื่อเต็มตอนติดตั้ง / หน้าข้อมูลแอป
+        name: "ระบบบันทึกต้นทุน กำไร - STone",
+        // short_name = ชื่อใต้ไอคอนบนหน้าจอ (สั้นเพื่อไม่ถูกตัด)
+        short_name: "STone",
+        description: "ระบบบันทึกต้นทุน กำไร - STone",
         start_url: "./",
         display: "standalone",
         background_color: "#ffffff",
@@ -1969,7 +1972,7 @@
         window.showToast('🎉 ยินดีด้วย! บรรลุเป้าหมายแล้ว ' + pct.toFixed(0) + '%', 'success');
         if (typeof Notification !== 'undefined') {
           if (Notification.permission === 'granted') {
-            new Notification('ส้มตำนายหนึ่ง', { body: 'บรรลุเป้าหมายรายรับแล้ว! ' + pct.toFixed(0) + '%', icon: './icon-192.png' });
+            new Notification('ระบบบันทึกต้นทุน กำไร - STone', { body: 'บรรลุเป้าหมายรายรับแล้ว! ' + pct.toFixed(0) + '%', icon: './icon-192.png' });
           } else if (Notification.permission !== 'denied') {
             Notification.requestPermission();
           }
@@ -2149,7 +2152,7 @@
       const net = pdfSums.net;
 
       doc.setFontSize(16);
-      doc.text('รายงานรายรับ-รายจ่าย ส้มตำนายหนึ่ง', 105, 15, { align: 'center' });
+      doc.text('รายงานรายรับ-รายจ่าย - STone', 105, 15, { align: 'center' });
       doc.setFontSize(10);
       doc.text('วันที่พิมพ์: ' + new Date().toLocaleString('th-TH'), 105, 22, { align: 'center' });
       doc.setFontSize(9);
@@ -2351,7 +2354,7 @@
       <button type="button" class="ds-close" aria-label="ปิด">&times;</button>
     </div>
     <div class="ds-body" id="dailySlipPrintArea">
-      <div class="ds-brand">ส้มตำนายหนึ่ง</div>
+      <div class="ds-brand">STone</div>
       <div class="ds-date">${dateLabel}</div>
       <div class="ds-card ds-inc">
         <div class="ds-label">รายรับ</div>

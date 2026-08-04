@@ -1,5 +1,5 @@
 /**
- * Firebase Auth + Firestore sync for ส้มตำนายหนึ่ง
+ * Firebase Auth + Firestore sync for ระบบบันทึกต้นทุน กำไร - STone
  * Depends on: SomtumStore (js/storage.js), window.appData helpers (js/app.js)
  */
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
