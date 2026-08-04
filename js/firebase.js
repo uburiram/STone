@@ -191,7 +191,8 @@ const firebaseConfig = {
             categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
             materials: [...window.DEFAULT_MATERIALS],
             equipments: [...window.DEFAULT_EQUIPMENTS],
-            customGoal: null
+            customGoal: null,
+            customGoalPercent: null
           };
           window.__txCacheLoaded = false;
           window.__loadedRange = { start: null, end: null };
@@ -237,6 +238,7 @@ const firebaseConfig = {
               if (meta.materials) window.appData.materials = meta.materials;
               if (meta.equipments) window.appData.equipments = meta.equipments;
               if (meta.customGoal !== undefined) window.appData.customGoal = meta.customGoal;
+              if (meta.customGoalPercent !== undefined) window.appData.customGoalPercent = meta.customGoalPercent;
             }
           }
           const raw = SomtumStore.getItem('somtumAppData');
@@ -342,6 +344,7 @@ const firebaseConfig = {
           materials: window.appData.materials,
           equipments: window.appData.equipments,
           customGoal: window.appData.customGoal,
+          customGoalPercent: window.appData.customGoalPercent,
           updatedAt: new Date().toISOString()
         }, { merge: true });
 
@@ -354,6 +357,7 @@ const firebaseConfig = {
           materials: pendingGuestData.materials,
           equipments: pendingGuestData.equipments,
           customGoal: pendingGuestData.customGoal,
+          customGoalPercent: pendingGuestData.customGoalPercent,
           updatedAt: new Date().toISOString()
         });
         const txCollRef = collection(db, "users", window.currentUser.uid, "transactions");
@@ -394,7 +398,8 @@ const firebaseConfig = {
           categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
           materials: [...window.DEFAULT_MATERIALS],
           equipments: [...window.DEFAULT_EQUIPMENTS],
-          customGoal: null
+          customGoal: null,
+          customGoalPercent: null
         };
       }
       // setItem หลัง clearAll เพื่อ restore owner uid ที่ถูก wipe
@@ -427,6 +432,7 @@ const firebaseConfig = {
           if (data.materials) window.appData.materials = data.materials;
           if (data.equipments) window.appData.equipments = data.equipments;
           if (data.customGoal !== undefined) window.appData.customGoal = data.customGoal;
+          if (data.customGoalPercent !== undefined) window.appData.customGoalPercent = data.customGoalPercent;
           window.appData = window.sanitizeAppData(window.appData);
           window.saveLocalOnly();
           window.refreshDashboard();
@@ -436,6 +442,7 @@ const firebaseConfig = {
             materials: window.appData.materials || [],
             equipments: window.appData.equipments || [],
             customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+            customGoalPercent: (window.appData.customGoalPercent !== null && window.appData.customGoalPercent !== undefined && !isNaN(Number(window.appData.customGoalPercent))) ? Number(window.appData.customGoalPercent) : null,
             updatedAt: new Date().toISOString()
           }));
           setDoc(settingsRef, bootPayload);
@@ -522,6 +529,7 @@ const firebaseConfig = {
           materials: window.appData.materials || [],
           equipments: window.appData.equipments || [],
           customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+            customGoalPercent: (window.appData.customGoalPercent !== null && window.appData.customGoalPercent !== undefined && !isNaN(Number(window.appData.customGoalPercent))) ? Number(window.appData.customGoalPercent) : null,
           updatedAt: new Date().toISOString()
         }));
         await setDoc(settingsRef, payload, { merge: true });
@@ -589,6 +597,7 @@ const firebaseConfig = {
           materials: window.appData.materials || [],
           equipments: window.appData.equipments || [],
           customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+            customGoalPercent: (window.appData.customGoalPercent !== null && window.appData.customGoalPercent !== undefined && !isNaN(Number(window.appData.customGoalPercent))) ? Number(window.appData.customGoalPercent) : null,
           updatedAt: new Date().toISOString()
         })), { merge: true });
 
@@ -716,6 +725,7 @@ const firebaseConfig = {
             materials: window.appData.materials || [],
             equipments: window.appData.equipments || [],
             customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+            customGoalPercent: (window.appData.customGoalPercent !== null && window.appData.customGoalPercent !== undefined && !isNaN(Number(window.appData.customGoalPercent))) ? Number(window.appData.customGoalPercent) : null,
             updatedAt: new Date().toISOString()
           }));
           const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");

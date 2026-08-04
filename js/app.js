@@ -52,7 +52,31 @@
       categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
       materials: [...window.DEFAULT_MATERIALS],
       equipments: [...window.DEFAULT_EQUIPMENTS],
-      customGoal: null
+      customGoal: null,          // เป้าเป็นจำนวนเงิน (บาท)
+      customGoalPercent: null    // เป้าเป็น % มาร์กอัปบนรายจ่าย (60 = ×1.6)
+    };
+
+    /** คำนวณยอดเป้าหมายรายรับจากโหมดที่ตั้งไว้ */
+    window.resolveTargetGoal = function(totalExpense, totalIncome) {
+      const exp = Number(totalExpense) || 0;
+      const inc = Number(totalIncome) || 0;
+      // 1) ตั้งเป็นจำนวนเงิน
+      if (window.appData.customGoal && window.appData.customGoal > 0) {
+        return window.roundMoney(window.appData.customGoal);
+      }
+      // 2) ตั้งเป็นเปอร์เซ็นต์มาร์กอัปบนรายจ่าย (เช่น 60 → รายจ่าย × 1.6)
+      if (window.appData.customGoalPercent !== null && window.appData.customGoalPercent !== undefined) {
+        const pct = Number(window.appData.customGoalPercent);
+        if (!isNaN(pct) && pct >= 0) {
+          if (exp > 0) return window.roundMoney(exp * (1 + pct / 100));
+          if (inc > 0) return window.roundMoney(inc);
+          return 1000;
+        }
+      }
+      // 3) สูตรเริ่มต้น = มาร์กอัป 60%
+      if (exp > 0) return window.roundMoney(exp * 1.6);
+      if (inc > 0) return window.roundMoney(inc);
+      return 1000;
     };
 
     window.sanitizeAppData = function(data) {
@@ -100,6 +124,12 @@
         data.customGoal = (!isNaN(g) && g > 0) ? g : null;
       } else {
         data.customGoal = null;
+      }
+      if (data.customGoalPercent !== null && data.customGoalPercent !== undefined) {
+        const p = Number(data.customGoalPercent);
+        data.customGoalPercent = (!isNaN(p) && p >= 0) ? p : null;
+      } else {
+        data.customGoalPercent = null;
       }
       data.transactions = data.transactions.filter(tx => {
         // Validate date format YYYY-MM-DD
@@ -717,9 +747,7 @@
       const totalExpense = sums.expense;
 
       const netProfit = sums.net;
-      let targetGoal = totalExpense > 0 ? window.roundMoney(totalExpense * 1.6) : (totalIncome > 0 ? totalIncome : 1000);
-      if (window.appData.customGoal && window.appData.customGoal > 0) targetGoal = window.roundMoney(window.appData.customGoal);
-
+      const targetGoal = window.resolveTargetGoal(totalExpense, totalIncome);
       const goalAchievedPercent = targetGoal > 0 ? (totalIncome / targetGoal) * 100 : 0;
 
       document.getElementById('kpiTotalIncome').innerText = `฿${totalIncome.toLocaleString('th-TH', {minimumFractionDigits:2})}`;
@@ -1129,51 +1157,135 @@
       modal.classList.remove('hidden');
     }
 
-    window.openGoalDetailModal = function() {
-      document.getElementById('customGoalInput').value = window.appData.customGoal || '';
+    window.setGoalModeUI = function(mode) {
+      const pctBox = document.getElementById('goalModePercentBox');
+      const amtBox = document.getElementById('goalModeAmountBox');
+      const btnPct = document.getElementById('goalModeBtnPercent');
+      const btnAmt = document.getElementById('goalModeBtnAmount');
+      if (!pctBox || !amtBox) return;
+      const isPct = mode === 'percent';
+      pctBox.classList.toggle('hidden', !isPct);
+      amtBox.classList.toggle('hidden', isPct);
+      if (btnPct && btnAmt) {
+        btnPct.className = isPct
+          ? 'flex-1 py-2 rounded-xl text-xs font-bold bg-brand-600 text-white'
+          : 'flex-1 py-2 rounded-xl text-xs font-semibold bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300';
+        btnAmt.className = !isPct
+          ? 'flex-1 py-2 rounded-xl text-xs font-bold bg-brand-600 text-white'
+          : 'flex-1 py-2 rounded-xl text-xs font-semibold bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300';
+      }
+      window.updateGoalPreview();
+    };
+
+    window.updateGoalPreview = function() {
       const filteredTx = window.getTimeFilteredTransactions();
-      let totalIncome = 0, totalExpense = 0;
-      {
-        const gSums = window.sumIncomeExpense(filteredTx);
-        totalIncome = gSums.income;
-        totalExpense = gSums.expense;
-      }
-      let calc = totalExpense > 0 ? window.roundMoney(totalExpense * 1.6) : (totalIncome > 0 ? totalIncome : 1000);
-      let formulaText = '';
-      if (window.appData.customGoal && window.appData.customGoal > 0) {
-        formulaText = `เป้าหมายที่ตั้งเอง: ฿${Number(window.appData.customGoal).toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
-      } else if (totalExpense > 0) {
-        formulaText = `สูตร (รายจ่าย × 1.6): ฿${calc.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
-      } else if (totalIncome > 0) {
-        formulaText = `ไม่มีรายจ่าย → ใช้ยอดรายรับเป็นเป้าหมาย: ฿${calc.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+      const gSums = window.sumIncomeExpense(filteredTx);
+      const totalIncome = gSums.income;
+      const totalExpense = gSums.expense;
+      const el = document.getElementById('goalCalculationBreakdown');
+      if (!el) return;
+
+      const modePct = document.getElementById('goalModePercentBox') &&
+        !document.getElementById('goalModePercentBox').classList.contains('hidden');
+
+      let lines = [];
+      lines.push(`<div class="text-[11px] text-gray-500">ช่วงที่เลือก: รายรับ ฿${totalIncome.toLocaleString('th-TH', {minimumFractionDigits: 2})} · รายจ่าย ฿${totalExpense.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>`);
+
+      if (modePct) {
+        const raw = (document.getElementById('customGoalPercentInput') || {}).value;
+        const pct = Number(raw);
+        const usePct = (!isNaN(pct) && pct >= 0) ? pct : 60;
+        const goal = totalExpense > 0
+          ? window.roundMoney(totalExpense * (1 + usePct / 100))
+          : (totalIncome > 0 ? totalIncome : 1000);
+        lines.push(`<div class="font-bold text-gray-800 dark:text-gray-100 text-sm mt-1">เป้าหมาย ≈ ฿${goal.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>`);
+        lines.push(`<div class="text-[11px] text-gray-600 dark:text-gray-300">มาร์กอัป +${usePct}% บนรายจ่าย (รายจ่าย × ${(1 + usePct / 100).toFixed(2)})</div>`);
+        if (totalExpense <= 0) {
+          lines.push(`<div class="text-[11px] text-amber-600">ยังไม่มีรายจ่ายในช่วงนี้ — ใช้ยอดสำรองชั่วคราว</div>`);
+        }
       } else {
-        formulaText = `ยังไม่มีข้อมูล → เป้าหมายเริ่มต้น ฿1,000.00`;
+        const raw = (document.getElementById('customGoalInput') || {}).value;
+        const val = Number(raw);
+        if (!raw || isNaN(val) || val <= 0) {
+          const auto = window.resolveTargetGoal(totalExpense, totalIncome);
+          lines.push(`<div class="text-[11px] text-gray-500 mt-1">ใส่จำนวนเงินเพื่อดูว่าคิดเป็นกี่ % ของรายจ่าย</div>`);
+          lines.push(`<div class="text-[11px]">เป้าปัจจุบันในระบบ: ฿${auto.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>`);
+        } else {
+          const goal = window.roundMoney(val);
+          lines.push(`<div class="font-bold text-gray-800 dark:text-gray-100 text-sm mt-1">เป้าหมาย ฿${goal.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>`);
+          if (totalExpense > 0) {
+            const ofExp = (goal / totalExpense) * 100;
+            const markup = ((goal / totalExpense) - 1) * 100;
+            lines.push(`<div class="text-[11px] text-gray-600 dark:text-gray-300">คิดเป็น <b>${ofExp.toFixed(1)}%</b> ของรายจ่าย</div>`);
+            lines.push(`<div class="text-[11px] text-gray-600 dark:text-gray-300">มาร์กอัป <b>${markup >= 0 ? '+' : ''}${markup.toFixed(1)}%</b> จากรายจ่าย</div>`);
+          } else {
+            lines.push(`<div class="text-[11px] text-amber-600">ยังไม่มีรายจ่ายในช่วงนี้ — ยังเทียบ % ไม่ได้</div>`);
+          }
+          if (totalIncome > 0) {
+            const prog = (totalIncome / goal) * 100;
+            lines.push(`<div class="text-[11px] text-brand-600 mt-1">ความคืบหน้าตอนนี้ ${prog.toFixed(1)}% ของเป้านี้</div>`);
+          }
+        }
       }
-      document.getElementById('goalCalculationBreakdown').innerHTML = formulaText;
+      el.innerHTML = lines.join('');
+    };
+
+    window.openGoalDetailModal = function() {
+      const hasAmt = window.appData.customGoal && window.appData.customGoal > 0;
+      const hasPct = window.appData.customGoalPercent !== null && window.appData.customGoalPercent !== undefined;
+      const mode = hasAmt ? 'amount' : 'percent';
+      const pctInput = document.getElementById('customGoalPercentInput');
+      const amtInput = document.getElementById('customGoalInput');
+      if (pctInput) {
+        pctInput.value = hasPct ? window.appData.customGoalPercent
+          : (hasAmt ? '' : 60);
+      }
+      if (amtInput) amtInput.value = hasAmt ? window.appData.customGoal : '';
+      window.setGoalModeUI(mode);
       document.getElementById('goalDetailModal').classList.remove('hidden');
-    }
+    };
 
     window.saveCustomGoal = function() {
-      const raw = document.getElementById('customGoalInput').value.trim();
-      const val = Number(raw);
-      if (!raw || isNaN(val) || val <= 0) {
-        alert('กรุณาใส่เป้าหมายที่เป็นตัวเลขมากกว่า 0');
-        return;
+      const modePct = document.getElementById('goalModePercentBox') &&
+        !document.getElementById('goalModePercentBox').classList.contains('hidden');
+
+      if (modePct) {
+        const raw = document.getElementById('customGoalPercentInput').value.trim();
+        const pct = Number(raw);
+        if (raw === '' || isNaN(pct) || pct < 0) {
+          alert('กรุณาใส่เปอร์เซ็นต์มาร์กอัปที่ถูกต้อง (เช่น 60)');
+          return;
+        }
+        window.appData.customGoalPercent = pct;
+        window.appData.customGoal = null; // โหมด % ชนะโหมดจำนวน
+      } else {
+        const raw = document.getElementById('customGoalInput').value.trim();
+        const val = Number(raw);
+        if (!raw || isNaN(val) || val <= 0) {
+          alert('กรุณาใส่เป้าหมายที่เป็นตัวเลขมากกว่า 0');
+          return;
+        }
+        window.appData.customGoal = window.roundMoney(val);
+        window.appData.customGoalPercent = null;
       }
-      window.appData.customGoal = window.roundMoney(val);
       window.syncDataToCloud(true);
       window.refreshDashboard();
       window.showToast('ตั้งเป้าหมายสำเร็จ');
       document.getElementById('goalDetailModal').classList.add('hidden');
-    }
+    };
 
     window.clearCustomGoal = function() {
       window.appData.customGoal = null;
-      document.getElementById('customGoalInput').value = '';
+      window.appData.customGoalPercent = null;
+      const pctInput = document.getElementById('customGoalPercentInput');
+      const amtInput = document.getElementById('customGoalInput');
+      if (pctInput) pctInput.value = '60';
+      if (amtInput) amtInput.value = '';
+      window.setGoalModeUI('percent');
       window.syncDataToCloud(true);
       window.refreshDashboard();
-      window.showToast('กลับไปใช้เป้าหมายสูตรปกติ');
-    }
+      window.showToast('กลับไปใช้เป้าหมายสูตรปกติ (+60%)');
+    };
 
     function renderTransactionHistory(txList) {
       const listElem = document.getElementById('transactionList');
@@ -1354,6 +1466,7 @@
                   materials: newData.materials,
                   equipments: newData.equipments,
                   customGoal: newData.customGoal,
+                  customGoalPercent: newData.customGoalPercent,
                   updatedAt: new Date().toISOString()
                 }, { merge: true });
 
@@ -1895,7 +2008,8 @@
             categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
             materials: [...window.DEFAULT_MATERIALS],
             equipments: [...window.DEFAULT_EQUIPMENTS],
-            customGoal: null
+            customGoal: null,
+            customGoalPercent: null
           };
           // Persist empty meta (categories defaults) without re-seeding old txs
           window.saveLocalOnly();
@@ -1911,6 +2025,7 @@
                 materials: window.appData.materials,
                 equipments: window.appData.equipments,
                 customGoal: null,
+                customGoalPercent: null,
                 updatedAt: new Date().toISOString()
               });
               const txCollRef = window.collection(window.db, "users", window.currentUser.uid, "transactions");
@@ -1961,8 +2076,7 @@
       const filteredTx = window.getTimeFilteredTransactions();
       const gSums = window.sumIncomeExpense(filteredTx);
       let totalIncome = gSums.income, totalExpense = gSums.expense;
-      let targetGoal = totalExpense > 0 ? window.roundMoney(totalExpense * 1.6) : (totalIncome > 0 ? totalIncome : 1000);
-      if (window.appData.customGoal && window.appData.customGoal > 0) targetGoal = window.appData.customGoal;
+      const targetGoal = window.resolveTargetGoal(totalExpense, totalIncome);
       const pct = targetGoal > 0 ? (totalIncome / targetGoal) * 100 : 0;
       const now = Date.now();
       const lastNotified = parseInt(SomtumStore.getItem('somtumLastGoalNotified') || '0', 10);
@@ -2233,85 +2347,119 @@
 
     // ----- Monthly Report -----
     window.openMonthlyReportModal = function() {
+      const monthInput = document.getElementById('monthlyReportMonth');
+      if (monthInput) {
+        const now = new Date();
+        const ym = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+        if (!monthInput.value) monthInput.value = ym;
+      }
+      window.renderMonthlyReport();
+      document.getElementById('monthlyReportModal').classList.remove('hidden');
+    };
+
+    window.renderMonthlyReport = function() {
       const body = document.getElementById('monthlyReportBody');
       if (!body) return;
-      const now = new Date();
-      const y = now.getFullYear();
-      const m = now.getMonth(); // 0-11
+
+      const monthInput = document.getElementById('monthlyReportMonth');
+      let y, m;
+      if (monthInput && monthInput.value && /^\d{4}-\d{2}$/.test(monthInput.value)) {
+        const parts = monthInput.value.split('-');
+        y = Number(parts[0]);
+        m = Number(parts[1]) - 1;
+      } else {
+        const now = new Date();
+        y = now.getFullYear();
+        m = now.getMonth();
+      }
+      const selected = new Date(y, m, 1);
       const prev = new Date(y, m - 1, 1);
       const prevY = prev.getFullYear();
       const prevM = prev.getMonth();
 
       const sumMonth = (year, month) => {
-        let inc = 0, exp = 0;
+        let inc = 0, exp = 0, count = 0;
         const catMap = {};
         (window.appData.transactions || []).forEach(tx => {
           const d = parseLocalDate(tx.date);
           if (!d || d.getFullYear() !== year || d.getMonth() !== month) return;
           const amt = Number(tx.amount) || 0;
+          count++;
           if (tx.type === 'income') inc += amt;
           else exp += amt;
           const key = (tx.type === 'income' ? 'รับ: ' : 'จ่าย: ') + (tx.category || 'ไม่ระบุ');
           catMap[key] = (catMap[key] || 0) + amt;
         });
         const topCats = Object.entries(catMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
-        return { inc, exp, net: inc - exp, topCats };
+        return { inc, exp, net: inc - exp, topCats, count };
       };
 
       const cur = sumMonth(y, m);
       const prv = sumMonth(prevY, prevM);
-      const pct = (a, b) => b === 0 ? (a === 0 ? '0%' : 'ใหม่') : ((a - b) / Math.abs(b) * 100).toFixed(1) + '%';
-      const monthName = now.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
+      const pct = (a, b) => {
+        if (b === 0) return a === 0 ? 'เท่าเดิม' : 'เพิ่มขึ้นจากศูนย์';
+        const v = ((a - b) / Math.abs(b) * 100);
+        const sign = v > 0 ? 'เพิ่มขึ้น ' : (v < 0 ? 'ลดลง ' : '');
+        return sign + Math.abs(v).toFixed(1) + '% จากเดือนก่อน';
+      };
+      const monthName = selected.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
       const prevName = prev.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
+      const margin = cur.inc > 0 ? (cur.net / cur.inc * 100) : null;
 
       body.innerHTML = `
-        <div class="text-center mb-2">
-          <div class="text-sm font-bold text-gray-800 dark:text-gray-100">${monthName}</div>
-          <div class="text-[11px] text-gray-500">เทียบกับ ${prevName}</div>
+        <div class="text-center pb-1">
+          <div class="text-lg font-bold text-gray-800 dark:text-gray-100">${monthName}</div>
+          <div class="text-sm text-gray-500 mt-1">เทียบกับ ${prevName}</div>
+          <div class="text-xs text-gray-400 mt-1">${cur.count} รายการในเดือนนี้</div>
         </div>
-        <div class="grid grid-cols-3 gap-2">
-          <div class="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-3 text-center">
-            <div class="text-[10px] text-emerald-700 dark:text-emerald-300">รายรับ</div>
-            <div class="text-sm font-bold text-emerald-700">฿${cur.inc.toLocaleString('th-TH', {minimumFractionDigits:0})}</div>
-            <div class="text-[10px] text-gray-500">${pct(cur.inc, prv.inc)}</div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl p-4 text-center">
+            <div class="text-sm font-semibold text-emerald-800 dark:text-emerald-300 mb-1">รายรับ</div>
+            <div class="text-xl font-bold text-emerald-700">฿${cur.inc.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>
+            <div class="text-xs text-gray-600 dark:text-gray-400 mt-2 leading-snug">${pct(cur.inc, prv.inc)}</div>
           </div>
-          <div class="bg-rose-50 dark:bg-rose-900/20 rounded-xl p-3 text-center">
-            <div class="text-[10px] text-rose-700 dark:text-rose-300">รายจ่าย</div>
-            <div class="text-sm font-bold text-rose-700">฿${cur.exp.toLocaleString('th-TH', {minimumFractionDigits:0})}</div>
-            <div class="text-[10px] text-gray-500">${pct(cur.exp, prv.exp)}</div>
+          <div class="bg-rose-50 dark:bg-rose-900/20 rounded-2xl p-4 text-center">
+            <div class="text-sm font-semibold text-rose-800 dark:text-rose-300 mb-1">รายจ่าย</div>
+            <div class="text-xl font-bold text-rose-700">฿${cur.exp.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>
+            <div class="text-xs text-gray-600 dark:text-gray-400 mt-2 leading-snug">${pct(cur.exp, prv.exp)}</div>
           </div>
-          <div class="bg-brand-50 dark:bg-brand-900/20 rounded-xl p-3 text-center">
-            <div class="text-[10px] text-brand-700">กำไร</div>
-            <div class="text-sm font-bold ${cur.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}">฿${cur.net.toLocaleString('th-TH', {minimumFractionDigits:0})}</div>
-            <div class="text-[10px] text-gray-500">${pct(cur.net, prv.net)}</div>
+          <div class="bg-orange-50 dark:bg-orange-900/20 rounded-2xl p-4 text-center">
+            <div class="text-sm font-semibold text-orange-800 dark:text-orange-300 mb-1">กำไรสุทธิ</div>
+            <div class="text-xl font-bold ${cur.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}">฿${cur.net.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>
+            <div class="text-xs text-gray-600 dark:text-gray-400 mt-2 leading-snug">${pct(cur.net, prv.net)}</div>
+            ${margin !== null ? `<div class="text-xs font-semibold mt-1 ${margin >= 0 ? 'text-emerald-600' : 'text-rose-600'}">อัตรากำไร ${margin.toFixed(1)}% ของรายรับ</div>` : ''}
           </div>
         </div>
-        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-xl p-3">
-          <div class="font-bold text-gray-700 dark:text-gray-200 mb-2">หมวดที่ใช้เยอะสุด (เดือนนี้)</div>
+        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-2xl p-4">
+          <div class="text-sm font-bold text-gray-800 dark:text-gray-100 mb-3">หมวดที่ใช้เยอะสุด</div>
           ${cur.topCats.length ? cur.topCats.map(([name, val], i) => `
-            <div class="flex justify-between py-1 border-b border-gray-100 dark:border-gray-600 last:border-0">
-              <span>${i + 1}. ${escapeHTML(name)}</span>
-              <span class="font-semibold">฿${val.toLocaleString('th-TH', {minimumFractionDigits:0})}</span>
-            </div>`).join('') : '<div class="text-gray-400">ยังไม่มีข้อมูล</div>'}
+            <div class="flex justify-between items-center py-2.5 border-b border-gray-200 dark:border-gray-600 last:border-0 gap-3">
+              <span class="text-sm text-gray-700 dark:text-gray-200">${i + 1}. ${escapeHTML(name)}</span>
+              <span class="text-sm font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">฿${val.toLocaleString('th-TH', {minimumFractionDigits: 2})}</span>
+            </div>`).join('') : '<div class="text-sm text-gray-400 py-2">ยังไม่มีข้อมูลในเดือนนี้</div>'}
         </div>
-        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-xl p-3 text-[11px] text-gray-600 dark:text-gray-300">
-          <div class="font-bold mb-1">เดือนก่อน (${prevName})</div>
-          <div>รายรับ ฿${prv.inc.toLocaleString('th-TH')} · รายจ่าย ฿${prv.exp.toLocaleString('th-TH')} · กำไร ฿${prv.net.toLocaleString('th-TH')}</div>
+        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-2xl p-4 text-sm text-gray-700 dark:text-gray-200 leading-relaxed">
+          <div class="font-bold text-gray-800 dark:text-gray-100 mb-2">สรุปเดือนก่อน — ${prevName}</div>
+          <div class="space-y-1">
+            <div>รายรับ <b>฿${prv.inc.toLocaleString('th-TH', {minimumFractionDigits: 2})}</b></div>
+            <div>รายจ่าย <b>฿${prv.exp.toLocaleString('th-TH', {minimumFractionDigits: 2})}</b></div>
+            <div>กำไรสุทธิ <b class="${prv.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}">฿${prv.net.toLocaleString('th-TH', {minimumFractionDigits: 2})}</b></div>
+          </div>
         </div>
       `;
-      document.getElementById('monthlyReportModal').classList.remove('hidden');
     };
 
     // ----- Daily slip (fullscreen on-screen + print) -----
-    window.printDailySlip = async function() {
-      const today = (typeof getLocalYYYYMMDD === 'function')
+    window.printDailySlip = async function(dateStr) {
+      const fallbackToday = (typeof getLocalYYYYMMDD === 'function')
         ? getLocalYYYYMMDD()
         : window.getLocalYYYYMMDD();
-      // Prefer IDB for today so slip is complete even if memory only has a filter range
-      let txs = (window.appData.transactions || []).filter(t => t.date === today);
+      const day = (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) ? dateStr : fallbackToday;
+      // Prefer IDB for the selected day so slip is complete even if memory only has a filter range
+      let txs = (window.appData.transactions || []).filter(t => t.date === day);
       try {
         if (window.SomtumStore && SomtumStore.getTxByDateRange) {
-          const fromIdb = await SomtumStore.getTxByDateRange(today, today);
+          const fromIdb = await SomtumStore.getTxByDateRange(day, day);
           if (fromIdb && fromIdb.length) txs = fromIdb;
         }
       } catch (e) { console.warn('printDailySlip IDB', e); }
@@ -2329,9 +2477,9 @@
       const marginColor = marginPct >= 0 ? '#047857' : '#be123c';
 
       // Thai date label
-      let dateLabel = today;
+      let dateLabel = day;
       try {
-        const parts = today.split('-');
+        const parts = day.split('-');
         if (parts.length === 3) {
           const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
           dateLabel = d.toLocaleDateString('th-TH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -2350,8 +2498,12 @@
 <div class="ds-backdrop">
   <div class="ds-sheet">
     <div class="ds-header">
-      <div class="ds-title">ใบสรุปยอดวันนี้</div>
+      <div class="ds-title">ใบสรุปยอดรายวัน</div>
       <button type="button" class="ds-close" aria-label="ปิด">&times;</button>
+    </div>
+    <div class="ds-date-bar no-print">
+      <label class="ds-date-label">เลือกวันที่</label>
+      <input type="date" id="dailySlipDateInput" value="${day}" class="ds-date-input">
     </div>
     <div class="ds-body" id="dailySlipPrintArea">
       <div class="ds-brand">STone</div>
@@ -2392,6 +2544,9 @@
 #dailySlipOverlay .ds-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #eee;flex-shrink:0;background:linear-gradient(90deg,#ea580c,#f59e0b);color:#fff}
 #dailySlipOverlay .ds-title{font-weight:700;font-size:clamp(15px,4.2vw,17px)}
 #dailySlipOverlay .ds-close{background:transparent;border:0;color:#fff;font-size:28px;line-height:1;cursor:pointer;padding:0 6px}
+#dailySlipOverlay .ds-date-bar{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #eee;background:#fff7ed;flex-shrink:0}
+#dailySlipOverlay .ds-date-label{font-size:13px;font-weight:600;color:#9a3412;white-space:nowrap}
+#dailySlipOverlay .ds-date-input{flex:1;font-size:14px;padding:8px 10px;border:1px solid #fdba74;border-radius:12px;background:#fff;color:#111;font-family:inherit}
 #dailySlipOverlay .ds-body{flex:1;overflow:auto;padding:clamp(16px,4vw,24px);text-align:center;-webkit-overflow-scrolling:touch}
 #dailySlipOverlay .ds-brand{font-size:clamp(22px,6.5vw,28px);font-weight:800;color:#111;margin:4px 0 6px}
 #dailySlipOverlay .ds-date{font-size:clamp(13px,3.6vw,15px);color:#555;margin-bottom:clamp(14px,3vw,20px)}
@@ -2416,7 +2571,7 @@
   #dailySlipOverlay{position:static}
   #dailySlipOverlay .ds-backdrop{background:#fff;padding:0}
   #dailySlipOverlay .ds-sheet{box-shadow:none;max-width:100%;height:auto;max-height:none;border-radius:0}
-  #dailySlipOverlay .ds-header,#dailySlipOverlay .ds-actions,#dailySlipOverlay .ds-close{display:none!important}
+  #dailySlipOverlay .ds-header,#dailySlipOverlay .ds-actions,#dailySlipOverlay .ds-close,#dailySlipOverlay .ds-date-bar,.no-print{display:none!important}
   #dailySlipOverlay .ds-body{padding:12mm}
   #dailySlipOverlay .ds-amt{font-size:28pt}
 }
@@ -2440,6 +2595,15 @@
       overlay.querySelector('.ds-btn-print').addEventListener('click', () => {
         window.print();
       });
+      const dateInput = overlay.querySelector('#dailySlipDateInput');
+      if (dateInput) {
+        dateInput.addEventListener('change', () => {
+          const v = dateInput.value;
+          if (v && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+            window.printDailySlip(v);
+          }
+        });
+      }
     };
 
     // ----- Weekly backup reminder -----
