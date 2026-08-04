@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Simple "bundler" for ส้มตำนายหนึ่ง
+# Simple "bundler" for ระบบบันทึกต้นทุน กำไร - STone
 #   ./build.sh           → modular copy into dist/
 #   ./build.sh --bundle  → concatenate storage+app → app.bundle.js
 set -euo pipefail

@@ -1,4 +1,4 @@
-/* Somtum Service Worker - network-first for app files (auth-safe) */
+/* STone Service Worker - network-first for app files (auth-safe) */
 const CACHE_NAME = 'somtum-v14';
 const CORE_ASSETS = [
   './',
