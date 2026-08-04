@@ -213,7 +213,7 @@ const firebaseConfig = {
       const btnLogout = document.getElementById('btnLogoutGoogle');
 
       if (user) {
-        avatar.src = user.photoURL || 'https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png';
+        avatar.src = user.photoURL || './icon-192.png';
         nameElem.innerText = user.displayName || user.email || 'ผู้ใช้ Google';
         if (statusElem) statusElem.innerText = 'เชื่อมต่อ Google แล้ว — พร้อมซิงค์ Cloud';
         if (badge) badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-emerald-500 border-2 border-white dark:border-gray-800 rounded-full';
@@ -262,13 +262,16 @@ const firebaseConfig = {
           window.initFirestoreListeners();
         } else if (localTransactions.length > 0) {
           pendingGuestData = JSON.parse(JSON.stringify(window.appData));
+          // Hide backup remind if open so both z-[95] modals don't stack
+          const bakModal = document.getElementById('backupRemindModal');
+          if (bakModal) bakModal.classList.add('hidden');
           document.getElementById('guestMergeModal').classList.remove('hidden');
         } else {
           SomtumStore.setItem('somtumDataOwnerUid', user.uid);
           window.initFirestoreListeners();
         }
       } else {
-        avatar.src = 'https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png';
+        avatar.src = './icon-192.png';
         nameElem.innerText = 'ผู้ใช้งานทั่วไป (ยังไม่ได้ล็อกอิน)';
         statusElem.innerText = 'บันทึกข้อมูลเฉพาะในเครื่องนี้';
         badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-gray-400 border-2 border-white rounded-full';
@@ -375,7 +378,17 @@ const firebaseConfig = {
         if (count > 0) await batch.commit();
         window.showToast('อัปโหลดข้อมูลเครื่องทับ Cloud เรียบร้อย');
       } else {
-        SomtumStore.removeItem('somtumAppData');
+        // "ใช้ข้อมูลบน Cloud เท่านั้น" — ล้าง tx store + meta ทั้งหมด ไม่ใช่แค่ key เดียว
+        if (SomtumStore.clearAllUserData) {
+          try {
+            await SomtumStore.clearAllUserData();
+          } catch (e) {
+            console.error('clearAllUserData (cloud-only) failed', e);
+            SomtumStore.removeItem('somtumAppData');
+          }
+        } else {
+          SomtumStore.removeItem('somtumAppData');
+        }
         window.appData = {
           transactions: [],
           categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
@@ -384,6 +397,7 @@ const firebaseConfig = {
           customGoal: null
         };
       }
+      // setItem หลัง clearAll เพื่อ restore owner uid ที่ถูก wipe
       SomtumStore.setItem('somtumDataOwnerUid', window.currentUser.uid);
       pendingGuestData = null;
       window.initFirestoreListeners();

@@ -411,7 +411,7 @@
     };
 
     function createDynamicManifest() {
-      const logoUrl = "https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png";
+      const logoUrl = "./icon-192.png";
       const manifest = {
         name: "ส้มตำนายหนึ่ง",
         short_name: "ส้มตำนายหนึ่ง",
@@ -786,15 +786,34 @@
       let cleaned = expr.replace(/x/gi, '*').replace(/÷/g, '/').replace(/\s+/g, '');
       if (!/^[0-9+\-*/().]+$/.test(cleaned)) return NaN;
       try {
-        let tokens = cleaned.match(/(\d+(?:\.\d+)?|[+\-*/()])/g);
-        if (!tokens) return NaN;
+        let rawTokens = cleaned.match(/(\d+(?:\.\d+)?|[+\-*/()])/g);
+        if (!rawTokens) return NaN;
+
+        // Fold unary +/- into the following number (start of expr, after operator, or after '(')
+        let tokens = [];
+        for (let i = 0; i < rawTokens.length; i++) {
+          const t = rawTokens[i];
+          if ((t === '-' || t === '+') &&
+              (tokens.length === 0 ||
+               '+-*/('.includes(String(tokens[tokens.length - 1])))) {
+            const next = rawTokens[i + 1];
+            if (next && !isNaN(next)) {
+              tokens.push(parseFloat((t === '-' ? '-' : '') + next));
+              i++;
+              continue;
+            }
+          }
+          if (!isNaN(t)) tokens.push(parseFloat(t));
+          else tokens.push(t);
+        }
+
         let outputQueue = [];
         let operatorStack = [];
         let precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
 
         for (let token of tokens) {
-          if (!isNaN(token)) {
-            outputQueue.push(parseFloat(token));
+          if (typeof token === 'number') {
+            outputQueue.push(token);
           } else if ('+-*/'.includes(token)) {
             while (
               operatorStack.length > 0 &&
@@ -1549,12 +1568,19 @@
         }
         cat.name = trimmed;
         let updatedCount = 0;
-        (window.appData.transactions || []).forEach(tx => {
+        for (const tx of (window.appData.transactions || [])) {
           if (tx.type === managerType && tx.category === oldName) {
             tx.category = trimmed;
             updatedCount++;
+            // Persist renamed tx to IndexedDB + mark dirty for offline re-sync
+            if (window.SomtumStore && SomtumStore.putTx) {
+              try {
+                await SomtumStore.putTx(tx);
+                if (SomtumStore.markDirty) await SomtumStore.markDirty(tx.id);
+              } catch (e) { console.warn('putTx after renameMain', e); }
+            }
           }
-        });
+        }
         window.syncDataToCloud(true);
         if (window.currentUser && updatedCount > 0) {
           try {
@@ -1595,21 +1621,31 @@
         }
         cat.subs[j] = trimmed;
         let updatedCount = 0;
-        (window.appData.transactions || []).forEach(tx => {
-          if (tx.type !== managerType || tx.category !== cat.name) return;
+        for (const tx of (window.appData.transactions || [])) {
+          if (tx.type !== managerType || tx.category !== cat.name) continue;
+          let changed = false;
           if (tx.subCategory === oldSub) {
             tx.subCategory = trimmed;
-            updatedCount++;
+            changed = true;
           } else if (tx.subCategory && tx.subCategory.includes(oldSub)) {
             const parts = tx.subCategory.split(',').map(s => s.trim());
             const idx = parts.indexOf(oldSub);
             if (idx !== -1) {
               parts[idx] = trimmed;
               tx.subCategory = parts.join(', ');
-              updatedCount++;
+              changed = true;
             }
           }
-        });
+          if (changed) {
+            updatedCount++;
+            if (window.SomtumStore && SomtumStore.putTx) {
+              try {
+                await SomtumStore.putTx(tx);
+                if (SomtumStore.markDirty) await SomtumStore.markDirty(tx.id);
+              } catch (e) { console.warn('putTx after renameSub', e); }
+            }
+          }
+        }
         window.syncDataToCloud(true);
         if (window.currentUser && updatedCount > 0) {
           try {
@@ -1758,14 +1794,14 @@
         }
         arr[idx] = trimmed;
         let updatedCount = 0;
-        (window.appData.transactions || []).forEach(tx => {
-          if (!tx.subCategory) return;
+        for (const tx of (window.appData.transactions || [])) {
+          if (!tx.subCategory) continue;
+          let changed = false;
           if (tx.subCategory === oldName) {
             tx.subCategory = trimmed;
-            updatedCount++;
+            changed = true;
           } else if (tx.subCategory.includes(oldName)) {
             const parts = tx.subCategory.split(',').map(s => s.trim());
-            let changed = false;
             for (let i = 0; i < parts.length; i++) {
               if (parts[i] === oldName) {
                 parts[i] = trimmed;
@@ -1774,10 +1810,18 @@
             }
             if (changed) {
               tx.subCategory = parts.join(', ');
-              updatedCount++;
             }
           }
-        });
+          if (changed) {
+            updatedCount++;
+            if (window.SomtumStore && SomtumStore.putTx) {
+              try {
+                await SomtumStore.putTx(tx);
+                if (SomtumStore.markDirty) await SomtumStore.markDirty(tx.id);
+              } catch (e) { console.warn('putTx after renameMaterial', e); }
+            }
+          }
+        }
         window.syncDataToCloud(true);
         if (window.currentUser && updatedCount > 0) {
           try {
@@ -1828,6 +1872,14 @@
         "ข้อมูลรายรับ-รายจ่าย หมวดหมู่ และเป้าหมายทั้งหมดจะถูกลบทั้งในเครื่องและบน Cloud (ถ้าล็อกอินอยู่) การกระทำนี้ไม่สามารถย้อนกลับได้",
         async () => {
           window.showToast("กำลังล้างข้อมูล...");
+          // Clear IndexedDB tx + meta stores + LS keys completely
+          if (window.SomtumStore && SomtumStore.clearAllUserData) {
+            try {
+              await SomtumStore.clearAllUserData();
+            } catch (e) {
+              console.error('clearAllUserData failed', e);
+            }
+          }
           window.appData = {
             transactions: [],
             categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
@@ -1835,17 +1887,14 @@
             equipments: [...window.DEFAULT_EQUIPMENTS],
             customGoal: null
           };
+          // Persist empty meta (categories defaults) without re-seeding old txs
           window.saveLocalOnly();
-          SomtumStore.removeItem('somtumHasUnsyncedData');
-          SomtumStore.removeItem('somtumLastSyncedTimestamp');
-          SomtumStore.removeItem('somtumAutoBackup');
-          SomtumStore.removeItem('somtumAutoBackupTime');
-          SomtumStore.removeItem('somtumAutoBackupUid');
-          SomtumStore.removeItem('somtumLastGoalNotified');
           if (typeof lastAutoBackupHash !== 'undefined') lastAutoBackupHash = '';
 
           if (window.currentUser && window.db) {
             try {
+              // Restore owner uid after clearAll wiped it
+              SomtumStore.setItem('somtumDataOwnerUid', window.currentUser.uid);
               const settingsRef = window.doc(window.db, "users", window.currentUser.uid, "meta", "settings");
               await window.setDoc(settingsRef, {
                 categories: window.appData.categories,
@@ -1913,7 +1962,7 @@
         window.showToast('🎉 ยินดีด้วย! บรรลุเป้าหมายแล้ว ' + pct.toFixed(0) + '%', 'success');
         if (typeof Notification !== 'undefined') {
           if (Notification.permission === 'granted') {
-            new Notification('ส้มตำนายหนึ่ง', { body: 'บรรลุเป้าหมายรายรับแล้ว! ' + pct.toFixed(0) + '%', icon: 'https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png' });
+            new Notification('ส้มตำนายหนึ่ง', { body: 'บรรลุเป้าหมายรายรับแล้ว! ' + pct.toFixed(0) + '%', icon: './icon-192.png' });
           } else if (Notification.permission !== 'denied') {
             Notification.requestPermission();
           }
@@ -1933,8 +1982,17 @@
       };
     }
 
-    // ----- Auto Backup (stronger hash + scoped) -----
+    // ----- Auto Backup (content hash + scoped) -----
     let lastAutoBackupHash = '';
+    /** djb2 hash — catches any content change (notes, category names, etc.) */
+    function simpleContentHash(str) {
+      let h = 5381;
+      for (let i = 0; i < str.length; i++) {
+        h = ((h << 5) + h) + str.charCodeAt(i);
+        h = h >>> 0; // force uint32
+      }
+      return h.toString(36);
+    }
     window.performAutoBackup = async function() {
       try {
         let data = window.appData;
@@ -1942,9 +2000,7 @@
           data = await SomtumStore.buildLegacyAppData(window.appData);
         }
         const dataStr = JSON.stringify(data);
-        let amountSum = 0;
-        (data.transactions || []).forEach(t => amountSum += Number(t.amount) || 0);
-        const hash = dataStr.length + '_' + (data.transactions || []).length + '_' + amountSum.toFixed(2);
+        const hash = simpleContentHash(dataStr);
         if (hash !== lastAutoBackupHash) {
           SomtumStore.setItem('somtumAutoBackup', dataStr);
           SomtumStore.setItem('somtumAutoBackupTime', new Date().toISOString());
@@ -2371,7 +2427,14 @@
       const week = 7 * 24 * 60 * 60 * 1000;
       if (Date.now() - last > week) {
         const modal = document.getElementById('backupRemindModal');
-        if (modal) setTimeout(() => modal.classList.remove('hidden'), 2500);
+        if (modal) {
+          // Don't clash with guestMergeModal (same z-index)
+          setTimeout(() => {
+            const guestModal = document.getElementById('guestMergeModal');
+            if (guestModal && !guestModal.classList.contains('hidden')) return;
+            modal.classList.remove('hidden');
+          }, 2500);
+        }
       }
     };
     // Hook after finish loading
