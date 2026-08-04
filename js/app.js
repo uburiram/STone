@@ -2407,43 +2407,44 @@
       const margin = cur.inc > 0 ? (cur.net / cur.inc * 100) : null;
 
       body.innerHTML = `
-        <div class="text-center pb-1">
-          <div class="text-lg font-bold text-gray-800 dark:text-gray-100">${monthName}</div>
-          <div class="text-sm text-gray-500 mt-1">เทียบกับ ${prevName}</div>
-          <div class="text-xs text-gray-400 mt-1">${cur.count} รายการในเดือนนี้</div>
+        <div class="text-center shrink-0">
+          <div class="text-base font-bold text-gray-800 dark:text-gray-100 leading-tight">${monthName}</div>
+          <div class="text-[11px] text-gray-500 mt-0.5">เทียบกับ ${prevName} · ${cur.count} รายการ</div>
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div class="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl p-4 text-center">
-            <div class="text-sm font-semibold text-emerald-800 dark:text-emerald-300 mb-1">รายรับ</div>
-            <div class="text-xl font-bold text-emerald-700">฿${cur.inc.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>
-            <div class="text-xs text-gray-600 dark:text-gray-400 mt-2 leading-snug">${pct(cur.inc, prv.inc)}</div>
+        <div class="grid grid-cols-3 gap-1.5 shrink-0">
+          <div class="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl px-1.5 py-2.5 text-center">
+            <div class="text-[10px] font-semibold text-emerald-800 dark:text-emerald-300">รายรับ</div>
+            <div class="text-sm font-bold text-emerald-700 leading-tight mt-0.5">฿${cur.inc.toLocaleString('th-TH', {minimumFractionDigits: 0})}</div>
+            <div class="text-[9px] text-gray-500 mt-1 leading-tight">${pct(cur.inc, prv.inc)}</div>
           </div>
-          <div class="bg-rose-50 dark:bg-rose-900/20 rounded-2xl p-4 text-center">
-            <div class="text-sm font-semibold text-rose-800 dark:text-rose-300 mb-1">รายจ่าย</div>
-            <div class="text-xl font-bold text-rose-700">฿${cur.exp.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>
-            <div class="text-xs text-gray-600 dark:text-gray-400 mt-2 leading-snug">${pct(cur.exp, prv.exp)}</div>
+          <div class="bg-rose-50 dark:bg-rose-900/20 rounded-xl px-1.5 py-2.5 text-center">
+            <div class="text-[10px] font-semibold text-rose-800 dark:text-rose-300">รายจ่าย</div>
+            <div class="text-sm font-bold text-rose-700 leading-tight mt-0.5">฿${cur.exp.toLocaleString('th-TH', {minimumFractionDigits: 0})}</div>
+            <div class="text-[9px] text-gray-500 mt-1 leading-tight">${pct(cur.exp, prv.exp)}</div>
           </div>
-          <div class="bg-orange-50 dark:bg-orange-900/20 rounded-2xl p-4 text-center">
-            <div class="text-sm font-semibold text-orange-800 dark:text-orange-300 mb-1">กำไรสุทธิ</div>
-            <div class="text-xl font-bold ${cur.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}">฿${cur.net.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>
-            <div class="text-xs text-gray-600 dark:text-gray-400 mt-2 leading-snug">${pct(cur.net, prv.net)}</div>
-            ${margin !== null ? `<div class="text-xs font-semibold mt-1 ${margin >= 0 ? 'text-emerald-600' : 'text-rose-600'}">อัตรากำไร ${margin.toFixed(1)}% ของรายรับ</div>` : ''}
+          <div class="bg-orange-50 dark:bg-orange-900/20 rounded-xl px-1.5 py-2.5 text-center">
+            <div class="text-[10px] font-semibold text-orange-800 dark:text-orange-300">กำไรสุทธิ</div>
+            <div class="text-sm font-bold ${cur.net >= 0 ? 'text-emerald-700' : 'text-rose-700'} leading-tight mt-0.5">฿${cur.net.toLocaleString('th-TH', {minimumFractionDigits: 0})}</div>
+            <div class="text-[9px] text-gray-500 mt-1 leading-tight">${pct(cur.net, prv.net)}</div>
+            ${margin !== null ? `<div class="text-[9px] font-semibold mt-0.5 ${margin >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${margin.toFixed(1)}% ของรายรับ</div>` : ''}
           </div>
         </div>
-        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-2xl p-4">
-          <div class="text-sm font-bold text-gray-800 dark:text-gray-100 mb-3">หมวดที่ใช้เยอะสุด</div>
-          ${cur.topCats.length ? cur.topCats.map(([name, val], i) => `
-            <div class="flex justify-between items-center py-2.5 border-b border-gray-200 dark:border-gray-600 last:border-0 gap-3">
-              <span class="text-sm text-gray-700 dark:text-gray-200">${i + 1}. ${escapeHTML(name)}</span>
-              <span class="text-sm font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">฿${val.toLocaleString('th-TH', {minimumFractionDigits: 2})}</span>
-            </div>`).join('') : '<div class="text-sm text-gray-400 py-2">ยังไม่มีข้อมูลในเดือนนี้</div>'}
+        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-xl px-3 py-2 flex-1 min-h-0 overflow-hidden flex flex-col">
+          <div class="text-xs font-bold text-gray-800 dark:text-gray-100 mb-1.5 shrink-0">หมวดที่ใช้เยอะสุด</div>
+          <div class="flex-1 min-h-0 overflow-hidden">
+            ${cur.topCats.length ? cur.topCats.map(([name, val], i) => `
+              <div class="flex justify-between items-center py-1 border-b border-gray-200/80 dark:border-gray-600 last:border-0 gap-2">
+                <span class="text-xs text-gray-700 dark:text-gray-200 truncate">${i + 1}. ${escapeHTML(name)}</span>
+                <span class="text-xs font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">฿${val.toLocaleString('th-TH', {minimumFractionDigits: 0})}</span>
+              </div>`).join('') : '<div class="text-xs text-gray-400 py-1">ยังไม่มีข้อมูลในเดือนนี้</div>'}
+          </div>
         </div>
-        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-2xl p-4 text-sm text-gray-700 dark:text-gray-200 leading-relaxed">
-          <div class="font-bold text-gray-800 dark:text-gray-100 mb-2">สรุปเดือนก่อน — ${prevName}</div>
-          <div class="space-y-1">
-            <div>รายรับ <b>฿${prv.inc.toLocaleString('th-TH', {minimumFractionDigits: 2})}</b></div>
-            <div>รายจ่าย <b>฿${prv.exp.toLocaleString('th-TH', {minimumFractionDigits: 2})}</b></div>
-            <div>กำไรสุทธิ <b class="${prv.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}">฿${prv.net.toLocaleString('th-TH', {minimumFractionDigits: 2})}</b></div>
+        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-xl px-3 py-2 text-xs text-gray-700 dark:text-gray-200 shrink-0">
+          <div class="font-bold text-gray-800 dark:text-gray-100 mb-1">เดือนก่อน — ${prevName}</div>
+          <div class="flex flex-wrap gap-x-3 gap-y-0.5 leading-snug">
+            <span>รับ <b>฿${prv.inc.toLocaleString('th-TH', {minimumFractionDigits: 0})}</b></span>
+            <span>จ่าย <b>฿${prv.exp.toLocaleString('th-TH', {minimumFractionDigits: 0})}</b></span>
+            <span>กำไร <b class="${prv.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}">฿${prv.net.toLocaleString('th-TH', {minimumFractionDigits: 0})}</b></span>
           </div>
         </div>
       `;
