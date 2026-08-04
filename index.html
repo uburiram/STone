@@ -442,11 +442,17 @@
   <!-- Monthly Report Modal -->
   <div id="monthlyReportModal" class="fixed inset-0 bg-black/50 z-[70] flex items-end sm:items-center justify-center hidden p-0 sm:p-4">
     <div class="bg-white dark:bg-gray-800 w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col overflow-hidden shadow-xl">
-      <div class="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
-        <h3 class="font-bold text-sm text-gray-800 dark:text-gray-100"><i class="fa-solid fa-calendar-check text-brand-500 mr-1.5"></i>สรุปรายเดือน</h3>
-        <button onclick="document.getElementById('monthlyReportModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-lg font-bold px-2">&times;</button>
+      <div class="p-4 border-b border-gray-100 dark:border-gray-700 space-y-3">
+        <div class="flex justify-between items-center">
+          <h3 class="font-bold text-base text-gray-800 dark:text-gray-100"><i class="fa-solid fa-calendar-check text-brand-500 mr-1.5"></i>สรุปรายเดือน</h3>
+          <button onclick="document.getElementById('monthlyReportModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-lg font-bold px-2">&times;</button>
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-xs font-semibold text-gray-600 dark:text-gray-300 whitespace-nowrap">เลือกเดือน</label>
+          <input type="month" id="monthlyReportMonth" onchange="renderMonthlyReport()" class="flex-1 text-sm border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-2 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500">
+        </div>
       </div>
-      <div class="p-4 overflow-y-auto flex-1 space-y-3 text-xs" id="monthlyReportBody">
+      <div class="p-4 overflow-y-auto flex-1 space-y-4 text-sm leading-relaxed" id="monthlyReportBody">
         <!-- filled by JS -->
       </div>
     </div>
@@ -665,14 +671,29 @@
         <h3 class="font-bold text-sm text-gray-800 dark:text-gray-100"><i class="fa-solid fa-bullseye text-brand-500"></i> ตั้งเป้าหมาย & คำนวณ</h3>
         <button onclick="document.getElementById('goalDetailModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 font-bold text-lg">&times;</button>
       </div>
-      <div class="text-xs space-y-2.5 text-gray-600 dark:text-gray-300">
-        <p>เป้าหมายตั้งต้นจะคำนวณจาก (รายจ่าย × 1.6) อัตโนมัติ แต่คุณสามารถกำหนดเป้าหมายเองได้</p>
+      <div class="text-xs space-y-3 text-gray-600 dark:text-gray-300">
+        <p class="leading-relaxed">เลือกตั้งเป้าเป็น <b>เปอร์เซ็นต์มาร์กอัปบนรายจ่าย</b> หรือเป็น <b>จำนวนเงิน</b> (ระบบจะบอกว่าจำนวนนั้นคิดเป็นกี่ % ของรายจ่าย)</p>
         <div class="flex gap-2">
-          <input type="number" id="customGoalInput" placeholder="ตั้งเป้าหมายเอง (เช่น 5000)" class="flex-1 border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-2 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none">
-          <button onclick="saveCustomGoal()" class="bg-brand-600 text-white px-3 py-2 rounded-xl">บันทึก</button>
-          <button onclick="clearCustomGoal()" class="bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-100 px-3 py-2 rounded-xl">ใช้สูตร</button>
+          <button type="button" id="goalModeBtnPercent" onclick="setGoalModeUI('percent')" class="flex-1 py-2 rounded-xl text-xs font-bold bg-brand-600 text-white">เป็น %</button>
+          <button type="button" id="goalModeBtnAmount" onclick="setGoalModeUI('amount')" class="flex-1 py-2 rounded-xl text-xs font-semibold bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">เป็นจำนวนเงิน</button>
         </div>
-        <div id="goalCalculationBreakdown" class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-600 space-y-1 mt-3"></div>
+        <div id="goalModePercentBox" class="space-y-2">
+          <label class="text-[11px] font-semibold text-gray-700 dark:text-gray-200">เปอร์เซ็นต์มาร์กอัปบนรายจ่าย</label>
+          <div class="flex gap-2 items-center">
+            <input type="number" id="customGoalPercentInput" min="0" step="1" placeholder="เช่น 60" oninput="updateGoalPreview()" class="flex-1 border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-2.5 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none text-sm">
+            <span class="text-sm font-bold text-gray-500">%</span>
+          </div>
+          <p class="text-[10px] text-gray-400">ตัวอย่าง: 60% = เป้าหมายรายรับเป็นรายจ่าย × 1.6</p>
+        </div>
+        <div id="goalModeAmountBox" class="space-y-2 hidden">
+          <label class="text-[11px] font-semibold text-gray-700 dark:text-gray-200">เป้าหมายเป็นจำนวนเงิน (บาท)</label>
+          <input type="number" id="customGoalInput" min="0" step="0.01" placeholder="เช่น 50000" oninput="updateGoalPreview()" class="w-full border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-2.5 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none text-sm">
+        </div>
+        <div id="goalCalculationBreakdown" class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-600 space-y-1 text-[12px] leading-relaxed"></div>
+        <div class="flex gap-2 pt-1">
+          <button onclick="saveCustomGoal()" class="flex-1 bg-brand-600 text-white py-2.5 rounded-xl font-bold text-xs">บันทึกเป้าหมาย</button>
+          <button onclick="clearCustomGoal()" class="px-3 py-2.5 rounded-xl bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-100 text-xs font-semibold">ใช้สูตร +60%</button>
+        </div>
       </div>
     </div>
   </div>
