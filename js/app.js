@@ -411,7 +411,6 @@
     };
 
     function createDynamicManifest() {
-      const logoUrl = "./icon-192.png";
       const manifest = {
         name: "ส้มตำนายหนึ่ง",
         short_name: "ส้มตำนายหนึ่ง",
@@ -420,8 +419,10 @@
         background_color: "#ffffff",
         theme_color: "#ea580c",
         icons: [
-          { src: logoUrl, sizes: "192x192", type: "image/png" },
-          { src: logoUrl, sizes: "512x512", type: "image/png" }
+          { src: "./icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "./icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+          { src: "./icon-maskable-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
+          { src: "./icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }
         ]
       };
       const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
@@ -1308,9 +1309,14 @@
           window.showConfirmModal("ยืนยันการนำเข้าข้อมูล", "ข้อมูลใหม่จะถูกนำมาแทนที่ข้อมูลปัจจุบัน คุณต้องการดำเนินการต่อหรือไม่?", async () => {
             window.showToast("กำลังนำเข้าข้อมูล...");
             const newData = window.sanitizeAppData(parsed);
-            window.appData = newData;
+            const ownerUid = window.currentUser ? window.currentUser.uid : null;
             try {
-              // CRITICAL: write ALL transactions into IDB (not just memory / meta)
+              // CRITICAL: wipe old IDB txs first — persistAppState only PUTs, never deletes orphans
+              if (window.SomtumStore && SomtumStore.clearAllUserData) {
+                await SomtumStore.clearAllUserData();
+              }
+              if (ownerUid) SomtumStore.setItem('somtumDataOwnerUid', ownerUid);
+              window.appData = newData;
               if (window.SomtumStore && SomtumStore.persistAppState) {
                 await SomtumStore.persistAppState(newData, { writeAllTx: true });
                 if (SomtumStore.markDirty) {
@@ -1325,6 +1331,7 @@
                 SomtumStore.setItem('somtumAppData', JSON.stringify(newData));
               } catch (e2) { /* quota ok — IDB is source of truth */ }
               window.__txCacheLoaded = false;
+              window.__loadedRange = { start: null, end: null };
               if (typeof window.ensureTransactionsLoaded === 'function') {
                 await window.ensureTransactionsLoaded(true);
               }
@@ -2028,11 +2035,25 @@
       }
       window.showConfirmModal('กู้คืนจาก Auto Backup', 'ข้อมูลปัจจุบันจะถูกแทนที่ด้วยสำรองเมื่อ ' + (t ? new Date(t).toLocaleString('th-TH') : 'ไม่ทราบเวลา') + ' ต้องการดำเนินการต่อหรือไม่?', async () => {
         try {
-          window.appData = window.sanitizeAppData(JSON.parse(bak));
-          if (window.SomtumStore && SomtumStore.persistAppState) {
-            await SomtumStore.persistAppState(window.appData, { writeAllTx: true });
-            window.__txCacheLoaded = false;
+          // Parse backup BEFORE clear — clearAllUserData wipes somtumAutoBackup keys
+          const restored = window.sanitizeAppData(JSON.parse(bak));
+          const ownerUid = window.currentUser ? window.currentUser.uid : (bakUid || null);
+          if (window.SomtumStore && SomtumStore.clearAllUserData) {
+            await SomtumStore.clearAllUserData();
           }
+          if (ownerUid) SomtumStore.setItem('somtumDataOwnerUid', ownerUid);
+          window.appData = restored;
+          if (window.SomtumStore && SomtumStore.persistAppState) {
+            await SomtumStore.persistAppState(restored, { writeAllTx: true });
+            if (SomtumStore.markDirty) {
+              for (const tx of (restored.transactions || [])) {
+                if (tx && tx.id) await SomtumStore.markDirty(tx.id);
+              }
+            }
+            if (SomtumStore.markMetaDirty) SomtumStore.markMetaDirty();
+          }
+          window.__txCacheLoaded = false;
+          window.__loadedRange = { start: null, end: null };
           window.saveLocalOnly();
           window.syncDataToCloud();
           if (typeof window.ensureTransactionsLoaded === 'function') {
