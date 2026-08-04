@@ -7,9 +7,23 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 mkdir -p js dist/js
 
+# Auto-bump CACHE_NAME in service-worker.js so clients pick up new assets
+bump_sw_cache() {
+  local ver="somtum-v$(date +%Y%m%d%H%M%S)"
+  if [[ -f service-worker.js ]]; then
+    sed -i -E "s/const CACHE_NAME = 'somtum-v[^']*'/const CACHE_NAME = '${ver}'/" service-worker.js
+    echo "[build] CACHE_NAME → ${ver}"
+  fi
+}
+bump_sw_cache
+
 copy_core() {
   cp -f index.html service-worker.js dist/
   cp -f js/firebase.js dist/js/
+  # Copy local icons used by relative paths
+  for f in icon-192.png icon-512.png favicon-32.png apple-touch-icon-180.png icon_256x256.png icon-maskable-192.png icon-maskable-512.png; do
+    [[ -f "$f" ]] && cp -f "$f" dist/ || true
+  done
 }
 
 if [[ "${1:-}" == "--bundle" ]]; then

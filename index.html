@@ -5,7 +5,7 @@
   <!-- Content-Security-Policy (basic hardening; allows required CDNs + inline handlers) -->
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
-    script-src 'self' 'unsafe-inline' 'unsafe-eval'
+    script-src 'self' 'unsafe-inline'
       https://cdn.tailwindcss.com
       https://cdnjs.cloudflare.com
       https://www.gstatic.com
@@ -48,8 +48,8 @@
   
   <!-- Icon & PWA Links -->
   <link id="manifest-placeholder" rel="manifest">
-  <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png">
-  <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png">
+  <link rel="icon" type="image/png" href="./favicon-32.png">
+  <link rel="apple-touch-icon" href="./apple-touch-icon-180.png">
   
   <!-- External Resources -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -110,7 +110,7 @@
 
   <!-- Loading Overlay -->
   <div id="loadingOverlay" class="fixed inset-0 bg-white/90 dark:bg-gray-900/90 z-[100] flex flex-col items-center justify-center transition-opacity duration-300">
-    <img src="https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png" class="w-16 h-16 animate-bounce mb-3 rounded-2xl shadow-md" alt="Somtum Logo">
+    <img src="./icon-192.png" class="w-16 h-16 animate-bounce mb-3 rounded-2xl shadow-md" alt="Somtum Logo">
     <i class="fa-solid fa-circle-notch fa-spin text-3xl text-brand-500 mb-2"></i>
     <p class="text-gray-700 dark:text-gray-200 font-bold text-xs">กำลังโหลดข้อมูล ส้มตำนายหนึ่ง...</p>
   </div>
@@ -131,7 +131,7 @@
     <div id="userProfileCard" class="bg-white dark:bg-gray-800 p-3.5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col sm:flex-row justify-between items-center gap-3">
       <div id="userInfoSection" class="flex items-center gap-3 w-full sm:w-auto">
         <div class="relative">
-          <img id="userAvatar" src="https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png" alt="Profile" class="w-11 h-11 rounded-full object-cover border-2 border-brand-500">
+          <img id="userAvatar" src="./icon-192.png" alt="Profile" class="w-11 h-11 rounded-full object-cover border-2 border-brand-500">
           <span id="syncStatusBadge" class="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-gray-400 border-2 border-white dark:border-gray-800 rounded-full" title="ไม่ได้เข้าสู่ระบบ"></span>
         </div>
         <div>
@@ -459,7 +459,7 @@
         <i class="fa-solid fa-hard-drive"></i>
       </div>
       <div>
-        <h3 class="font-bold text-base text-gray-800 dark:text-gray-100">ถึงเวลสำรองข้อมูลประจำสัปดาห์</h3>
+        <h3 class="font-bold text-base text-gray-800 dark:text-gray-100">ถึงเวลาสำรองข้อมูลประจำสัปดาห์</h3>
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">แนะนำให้ Export ไฟล์ JSON เก็บไว้นอกเครื่อง กันข้อมูลหายเมื่อเครื่องพังหรือถูกล้าง</p>
       </div>
       <div class="flex flex-col gap-2 pt-1">
@@ -666,7 +666,7 @@
         <button onclick="document.getElementById('goalDetailModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 font-bold text-lg">&times;</button>
       </div>
       <div class="text-xs space-y-2.5 text-gray-600 dark:text-gray-300">
-        <p>เป้าหมายตั้งต้นจะคำนวณจาก (รายจ่ายรวม + 60%) อัตโนมัติ แต่คุณสามารถกำหนดเป้าหมายเองได้</p>
+        <p>เป้าหมายตั้งต้นจะคำนวณจาก (รายจ่าย × 1.6) อัตโนมัติ แต่คุณสามารถกำหนดเป้าหมายเองได้</p>
         <div class="flex gap-2">
           <input type="number" id="customGoalInput" placeholder="ตั้งเป้าหมายเอง (เช่น 5000)" class="flex-1 border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-2 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none">
           <button onclick="saveCustomGoal()" class="bg-brand-600 text-white px-3 py-2 rounded-xl">บันทึก</button>
