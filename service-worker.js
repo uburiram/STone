@@ -1,5 +1,5 @@
 /* STone Service Worker - network-first for app files (auth-safe) */
-const CACHE_NAME = 'somtum-v16-bugfix';
+const CACHE_NAME = 'somtum-v20260804173103';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -15,7 +15,10 @@ const CORE_ASSETS = [
   './icon-192.png',
   './icon-512.png',
   './favicon-32.png',
-  './apple-touch-icon-180.png'
+  './apple-touch-icon-180.png',
+  './icon-maskable-192.png',
+  './icon-maskable-512.png',
+  './icon_256x256.png'
 ];
 
 self.addEventListener('install', (event) => {

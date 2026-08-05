@@ -20,6 +20,9 @@ bump_sw_cache
 copy_core() {
   cp -f index.html service-worker.js dist/
   cp -f js/firebase.js dist/js/
+  # Keep docs & build script in dist in sync with root
+  [[ -f README.md ]] && cp -f README.md dist/ || true
+  cp -f build.sh dist/ || true
   # Copy local icons used by relative paths
   for f in icon-192.png icon-512.png favicon-32.png apple-touch-icon-180.png icon_256x256.png icon-maskable-192.png icon-maskable-512.png; do
     [[ -f "$f" ]] && cp -f "$f" dist/ || true
