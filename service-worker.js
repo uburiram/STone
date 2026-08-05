@@ -1,5 +1,5 @@
 /* STone Service Worker - network-first for app files (auth-safe) */
-const CACHE_NAME = 'somtum-v20260805014604';
+const CACHE_NAME = 'somtum-v20260805025905';
 const CORE_ASSETS = [
   './',
   './index.html',
