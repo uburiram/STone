@@ -1,0 +1,51 @@
+rules_version = '2';
+/**
+ * STone — Firestore Security Rules
+ * Deploy: firebase deploy --only firestore:rules
+ *
+ * Path model used by the app:
+ *   users/{userId}/meta/settings
+ *   users/{userId}/transactions/{txId}
+ *
+ * Principle: each signed-in user can only read/write their own tree.
+ * Unauthenticated access is denied.
+ */
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Reject unknown top-level collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId} {
+      // User root doc (optional profile) — owner only
+      allow read, write: if isOwner(userId);
+
+      match /meta/{docId} {
+        allow read, write: if isOwner(userId)
+          && docId in ['settings'];
+      }
+
+      match /transactions/{txId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.keys().hasAll(['id', 'type', 'date', 'amount'])
+          && request.resource.data.type in ['income', 'expense']
+          && request.resource.data.amount is number
+          && request.resource.data.amount > 0
+          && request.resource.data.id is string
+          && request.resource.data.id == txId;
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}

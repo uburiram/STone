@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Simple "bundler" for ส้มตำนายหนึ่ง
+# Simple "bundler" for ระบบบันทึกต้นทุน กำไร - STone
 #   ./build.sh           → modular copy into dist/
 #   ./build.sh --bundle  → concatenate storage+app → app.bundle.js
 set -euo pipefail
@@ -7,9 +7,30 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 mkdir -p js dist/js
 
+# Auto-bump CACHE_NAME in service-worker.js so clients pick up new assets
+bump_sw_cache() {
+  local ver="stone-v$(date +%Y%m%d%H%M%S)"
+  if [[ -f service-worker.js ]]; then
+    sed -i -E "s/const CACHE_NAME = 'stone-v[^']*'/const CACHE_NAME = '${ver}'/" service-worker.js
+    echo "[build] CACHE_NAME → ${ver}"
+  fi
+}
+bump_sw_cache
+
 copy_core() {
   cp -f index.html service-worker.js dist/
+  [[ -f manifest.webmanifest ]] && cp -f manifest.webmanifest dist/ || true
+  [[ -f privacy.html ]] && cp -f privacy.html dist/ || true
+  [[ -f firestore.rules ]] && cp -f firestore.rules dist/ || true
+  [[ -f SECURITY.md ]] && cp -f SECURITY.md dist/ || true
   cp -f js/firebase.js dist/js/
+  # Keep docs & build script in dist in sync with root
+  [[ -f README.md ]] && cp -f README.md dist/ || true
+  cp -f build.sh dist/ || true
+  # Copy local icons used by relative paths
+  for f in icon-192.png icon-512.png favicon-32.png apple-touch-icon-180.png icon_256x256.png icon-maskable-192.png icon-maskable-512.png; do
+    [[ -f "$f" ]] && cp -f "$f" dist/ || true
+  done
 }
 
 if [[ "${1:-}" == "--bundle" ]]; then
@@ -39,7 +60,7 @@ PY
 else
   echo "[build] modular mode"
   copy_core
-  cp -f js/storage.js js/app.js dist/js/
+  cp -f js/storage.js js/app.js js/reports.js dist/js/ 2>/dev/null || cp -f js/storage.js js/app.js dist/js/
   echo "[build] dist/ ready (modular)"
 fi
 
