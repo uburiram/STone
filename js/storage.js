@@ -134,7 +134,7 @@
       return true;
     } catch (e) {
       lsWriteFailures++;
-      console.warn('[SomtumStore] LS write failed', logicalKey, e && e.name);
+      console.warn('[STone] LS write failed', logicalKey, e && e.name);
       return false;
     }
   }
@@ -145,7 +145,7 @@
   function enqueue(fn) {
     // Keep the queue alive after errors; record last failure for diagnostics
     writeQueue = writeQueue.then(fn).catch((e) => {
-      console.error('[SomtumStore] write queue error', e);
+      console.error('[STone] write queue error', e);
       try {
         memoryKv['__lastWriteError'] = String((e && e.message) || e || 'unknown');
         memoryKv['__lastWriteErrorAt'] = new Date().toISOString();
@@ -273,7 +273,7 @@
         memoryKv[FLAG_MIGRATED] = await kvGet(FLAG_MIGRATED);
       }
       txCountCache = await countTx();
-      console.info('[SomtumStore] scope=', activeScope, 'ready tx=', txCountCache);
+      console.info('[STone] scope=', activeScope, 'ready tx=', txCountCache);
       return;
     }
 
@@ -297,15 +297,15 @@
         const bestN = Array.isArray(parsed.transactions) ? parsed.transactions.length : 0;
         if (!migrated || existingCount === 0 || bestN > existingCount) {
           const result = await importLegacyObject(parsed);
-          console.info('[SomtumStore] migrated/merged from', best.src, 'tx=', result.tx, 'idbBefore=', existingCount, 'legacyN=', bestN);
+          console.info('[STone] migrated/merged from', best.src, 'tx=', result.tx, 'idbBefore=', existingCount, 'legacyN=', bestN);
         } else {
-          console.info('[SomtumStore] v2 ready, tx count=', existingCount, '(legacy not richer)');
+          console.info('[STone] v2 ready, tx count=', existingCount, '(legacy not richer)');
         }
       } catch (e) {
-        console.error('[SomtumStore] migrate parse/import failed', e);
+        console.error('[STone] migrate parse/import failed', e);
       }
     } else if (existingCount > 0) {
-      console.info('[SomtumStore] v2 ready, tx count=', existingCount);
+      console.info('[STone] v2 ready, tx count=', existingCount);
     }
 
     try {
@@ -325,7 +325,7 @@
     await kvSet(FLAG_MIGRATED, new Date().toISOString());
     memoryKv[FLAG_MIGRATED] = await kvGet(FLAG_MIGRATED);
     txCountCache = await countTx();
-    console.info('[SomtumStore] migration complete (guest). tx=', txCountCache);
+    console.info('[STone] migration complete (guest). tx=', txCountCache);
     try {
       const seeded = await kvGet('__seed_dirty_v2');
       if (!seeded && txCountCache > 0) {
@@ -382,7 +382,7 @@
       if (next === activeScope && ready && db) {
         return true;
       }
-      console.info('[SomtumStore] switchScope', activeScope, '→', next);
+      console.info('[STone] switchScope', activeScope, '→', next);
       try {
         await writeQueue;
       } catch (e) { /* */ }
@@ -442,7 +442,7 @@
                 await setDirtyIds(allList.filter((x) => x && x.id).map((x) => String(x.id)));
                 memoryKv[FLAG_META_DIRTY] = '1';
                 await kvSet(FLAG_META_DIRTY, '1');
-                console.info('[SomtumStore] seeded dirty on init', n);
+                console.info('[STone] seeded dirty on init', n);
               }
               await kvSet('__seed_dirty_v2', '1');
               memoryKv['__seed_dirty_v2'] = '1';
@@ -464,7 +464,7 @@
         }));
         return true;
       } catch (e) {
-        console.error('[SomtumStore] init failed, LS-only fallback', e);
+        console.error('[STone] init failed, LS-only fallback', e);
         try {
           SMALL_LS_KEYS.forEach((k) => {
             const v = safeLsGet(k);
@@ -493,14 +493,14 @@
             const data = JSON.parse(str);
             await importLegacyObject(data);
           } catch (e) {
-            console.error('[SomtumStore] appData structured persist failed', e);
+            console.error('[STone] appData structured persist failed', e);
           }
         });
         if (str.length <= LS_APPDATA_MAX_CHARS) {
           safeLsSet(key, str);
         } else {
           safeLsRemove(key);
-          console.info('[SomtumStore] skipped LS appData mirror (size', str.length, ')');
+          console.info('[STone] skipped LS appData mirror (size', str.length, ')');
         }
         return;
       }
@@ -726,7 +726,7 @@
           await setDirtyIds(ids);
           memoryKv[FLAG_META_DIRTY] = '1';
           await kvSet(FLAG_META_DIRTY, '1');
-          console.info('[SomtumStore] seeded dirty ids', ids.length);
+          console.info('[STone] seeded dirty ids', ids.length);
         }
         memoryKv['__seed_dirty_v2'] = '1';
         await kvSet('__seed_dirty_v2', '1');
@@ -760,4 +760,5 @@
   };
 
   global.SomtumStore = SomtumStore;
+  global.SToneStore = global.SomtumStore;
 })(typeof window !== 'undefined' ? window : globalThis);
