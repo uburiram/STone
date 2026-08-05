@@ -328,6 +328,69 @@ const firebaseConfig = {
       }
     });
 
+    /**
+     * Merge category subs trees by node name (case-insensitive).
+     * - string leaf and branch with same name → keep branch, merge children
+     * - two branches → recursive children merge
+     * - local order preserved; cloud-only nodes appended
+     */
+    window.mergeSubsByName = function(localSubs, cloudSubs) {
+      const local = Array.isArray(localSubs) ? localSubs : [];
+      const cloud = Array.isArray(cloudSubs) ? cloudSubs : [];
+
+      function nodeName(n) {
+        if (typeof n === 'string') return n;
+        if (n && typeof n === 'object' && typeof n.name === 'string') return n.name;
+        return '';
+      }
+      function nodeChildren(n) {
+        if (typeof n === 'string') return [];
+        if (n && typeof n === 'object' && Array.isArray(n.children)) return n.children;
+        return [];
+      }
+      function isBranch(n) {
+        return n && typeof n === 'object' && typeof n.name === 'string';
+      }
+
+      const map = new Map(); // key = lower name → { name, childrenArr | null }
+      const order = [];
+
+      function upsert(node, preferCloudChildren) {
+        const name = nodeName(node).trim();
+        if (!name) return;
+        const key = name.toLowerCase();
+        const kids = nodeChildren(node);
+        if (!map.has(key)) {
+          order.push(key);
+          if (kids.length > 0 || isBranch(node)) {
+            map.set(key, { name: name, children: kids.slice() });
+          } else {
+            map.set(key, { name: name, children: null }); // pure leaf
+          }
+          return;
+        }
+        const cur = map.get(key);
+        // Prefer preserving original display casing from first insert (local)
+        if (kids.length > 0) {
+          if (cur.children == null) cur.children = [];
+          cur.children = window.mergeSubsByName(cur.children, kids);
+        } else if (isBranch(node) && cur.children == null) {
+          // empty branch stays leaf unless we already have children
+        }
+      }
+
+      local.forEach(function(n) { upsert(n, false); });
+      cloud.forEach(function(n) { upsert(n, true); });
+
+      return order.map(function(key) {
+        const cur = map.get(key);
+        if (cur.children && cur.children.length > 0) {
+          return { name: cur.name, children: cur.children };
+        }
+        return cur.name;
+      });
+    };
+
     window.resolveGuestDataConflict = async function(action) {
       document.getElementById('guestMergeModal').classList.add('hidden');
       if (!window.currentUser) return;
@@ -353,14 +416,17 @@ const firebaseConfig = {
               cloudCats.forEach(cloudCat => {
                 let localCat = mergedCategories[type].find(c => c.name.trim().toLowerCase() === cloudCat.name.trim().toLowerCase());
                 if (localCat) {
-                  if (cloudCat.subs) localCat.subs = Array.from(new Set([...(localCat.subs || []), ...cloudCat.subs]));
+                  if (cloudCat.subs) {
+                    localCat.subs = window.mergeSubsByName(localCat.subs || [], cloudCat.subs || []);
+                  }
                   if (cloudCat.flags) {
                     localCat.flags = localCat.flags || {};
                     if (cloudCat.flags.isMaterialCategory) localCat.flags.isMaterialCategory = true;
                     if (cloudCat.flags.isEquipmentCategory) localCat.flags.isEquipmentCategory = true;
                   }
                 } else {
-                  mergedCategories[type].push(cloudCat);
+                  // Deep-clone cloud cat so later local edits do not mutate the snapshot
+                  mergedCategories[type].push(JSON.parse(JSON.stringify(cloudCat)));
                 }
               });
             }
