@@ -107,6 +107,21 @@
     /** Separator for nested path stored in transaction.subCategory (legacy plain strings still work) */
     window.CAT_PATH_SEP = ' › ';
 
+    /** Reject names that break nested path encoding or are empty. */
+    window.isInvalidCategoryName = function(name) {
+      const s = String(name == null ? '' : name).trim();
+      if (!s) return 'กรุณาระบุชื่อ';
+      if (s.indexOf(window.CAT_PATH_SEP) !== -1) {
+        return 'ชื่อต้องไม่มีเครื่องหมาย "' + window.CAT_PATH_SEP + '"';
+      }
+      // Also block bare › which might be typed without spaces
+      if (s.indexOf('›') !== -1) {
+        return 'ชื่อต้องไม่มีเครื่องหมาย ›';
+      }
+      return null;
+    };
+
+
     window.isCatBranch = function(node) {
       return node && typeof node === 'object' && typeof node.name === 'string';
     };
@@ -2055,6 +2070,8 @@
       const input = document.getElementById(inputId);
       const val = input ? input.value.trim() : '';
       if (!val) return;
+      const badName = window.isInvalidCategoryName(val);
+      if (badName) { alert(badName); return; }
       const resolved = window.resolveCatPath(pathStr);
       if (!resolved || resolved.node == null) return;
       // Promote string leaf → branch object so we can attach children
@@ -2064,8 +2081,7 @@
         resolved.parentArr[resolved.index] = node;
       }
       if (!Array.isArray(node.children)) node.children = [];
-      // depth of new child = resolved.depth + 1 (under main); max under main = MAX_CAT_DEPTH - 1
-      if (resolved.depth + 1 >= window.MAX_CAT_DEPTH - 1 && false) { /* allow add at this level; children of new node limited by UI */ }
+      // depth of new child under main; block when already at max depth
       if (resolved.depth >= window.MAX_CAT_DEPTH - 1) {
         alert('ซ้อนได้สูงสุด ' + window.MAX_CAT_DEPTH + ' ชั้น');
         return;
@@ -2087,6 +2103,8 @@
       const oldName = window.catNodeName(resolved.node);
       window.openRenameModal('แก้ไขรายการย่อย', 'ชื่อใหม่จะถูกอัปเดตในรายการที่บันทึกไว้แล้วด้วย', oldName, async function(trimmed) {
         if (trimmed === oldName) return;
+        const badRename = window.isInvalidCategoryName(trimmed);
+        if (badRename) { alert(badRename); return; }
         const siblings = resolved.parentArr || [];
         if (siblings.some(function(s, idx) {
           return idx !== resolved.index && window.catNodeName(s).toLowerCase() === trimmed.toLowerCase();
@@ -2170,6 +2188,8 @@
       const oldName = cat.name;
       window.openRenameModal('แก้ไขหมวดหมู่หลัก', 'ชื่อใหม่จะถูกอัปเดตในรายการที่บันทึกไว้แล้วด้วย', oldName, async (trimmed) => {
         if (trimmed === oldName) return;
+        const badMain = window.isInvalidCategoryName(trimmed);
+        if (badMain) { alert(badMain); return; }
         if (cats.some((c, idx) => idx !== i && c.name.toLowerCase() === trimmed.toLowerCase())) {
           alert('มีหมวดหมู่นี้อยู่แล้ว');
           return;
@@ -2222,77 +2242,16 @@
 
     // Rename sub-category + update related transactions
     window.renameSubCategory = function(i, j) {
-      const cat = window.appData.categories[managerType][i];
-      if (!cat || !cat.subs || !cat.subs[j]) return;
-      const oldSub = cat.subs[j];
-      window.openRenameModal('แก้ไขรายการย่อย', 'ชื่อใหม่จะถูกอัปเดตในรายการที่บันทึกไว้แล้วด้วย', oldSub, async (trimmed) => {
-        if (trimmed === oldSub) return;
-        if (cat.subs.some((s, idx) => idx !== j && s.toLowerCase() === trimmed.toLowerCase())) {
-          alert('มีรายการย่อยนี้อยู่แล้ว');
-          return;
-        }
-        cat.subs[j] = trimmed;
-        if (typeof window.loadAllTransactions === 'function') {
-          try { await window.loadAllTransactions(); } catch (e) { console.warn(e); }
-        }
-        let updatedCount = 0;
-        for (const tx of (window.appData.transactions || [])) {
-          if (tx.type !== managerType || tx.category !== cat.name) continue;
-          let changed = false;
-          if (tx.subCategory === oldSub) {
-            tx.subCategory = trimmed;
-            changed = true;
-          } else if (tx.subCategory && tx.subCategory.includes(oldSub)) {
-            const parts = tx.subCategory.split(',').map(s => s.trim());
-            const idx = parts.indexOf(oldSub);
-            if (idx !== -1) {
-              parts[idx] = trimmed;
-              tx.subCategory = parts.join(', ');
-              changed = true;
-            }
-          }
-          if (changed) {
-            updatedCount++;
-            if (window.SomtumStore && SomtumStore.putTx) {
-              try {
-                await SomtumStore.putTx(tx);
-                if (SomtumStore.markDirty) await SomtumStore.markDirty(tx.id);
-              } catch (e) { console.warn('putTx after renameSub', e); }
-            }
-          }
-        }
-        window.syncDataToCloud(true);
-        if (window.currentUser && updatedCount > 0) {
-          try {
-            let batch = window.writeBatch(window.db);
-            let count = 0;
-            for (const tx of window.appData.transactions) {
-              if (tx.type === managerType && tx.category === cat.name &&
-                  (tx.subCategory === trimmed || (tx.subCategory || '').includes(trimmed))) {
-                const txRef = window.doc(window.db, "users", window.currentUser.uid, "transactions", tx.id);
-                batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
-                count++;
-                if (count >= 400) { await batch.commit(); batch = window.writeBatch(window.db); count = 0; }
-              }
-            }
-            if (count > 0) await batch.commit();
-          } catch (e) {
-            console.error('Rename sub tx sync error:', e);
-            window.showToast('อัปเดตรายการย่อยแล้ว แต่ซิงค์บางส่วนล้มเหลว', 'error');
-          }
-        }
-        window.renderCategoryTree();
-        window.refreshDashboard();
-        window.showToast(updatedCount > 0
-          ? `แก้ไขรายการย่อยเรียบร้อย (อัปเดต ${updatedCount} รายการ)`
-          : 'แก้ไขรายการย่อยเรียบร้อย');
-      });
+      // Legacy (i, j) API → path-based implementation (supports nested nodes)
+      window.renameSubCategoryPath(String(i) + ',' + String(j));
     };
 
     window.addNewCategory = function() {
       const nameInput = document.getElementById('newCatName');
       const name = nameInput.value.trim();
-      if(!name) return;
+      if (!name) return;
+      const bad = window.isInvalidCategoryName(name);
+      if (bad) { alert(bad); return; }
 
       const isMaterial = document.getElementById('newCatIsMaterial').checked;
       const isEquipment = document.getElementById('newCatIsEquipment').checked;
@@ -2338,6 +2297,8 @@
       const input = document.getElementById('newSub-' + i);
       const val = input ? input.value.trim() : '';
       if (!val) return;
+      const bad = window.isInvalidCategoryName(val);
+      if (bad) { alert(bad); return; }
 
       const cat = window.appData.categories[managerType][i];
       if (!cat.subs) cat.subs = [];

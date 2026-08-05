@@ -1,5 +1,5 @@
 /**
- * Firebase Auth + Firestore sync for ส้มตำนายหนึ่ง
+ * Firebase Auth + Firestore sync for ระบบบันทึกต้นทุน กำไร - STone
  * Depends on: SomtumStore (js/storage.js), window.appData helpers (js/app.js)
  */
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
@@ -167,36 +167,38 @@ const firebaseConfig = {
     };
 
     window.logoutGoogle = async function() {
-      window.showConfirmModal("ยืนยันการออกจากระบบ", "ข้อมูลของบัญชีนี้จะถูกลบออกจากเครื่องเพื่อความปลอดภัย และระบบจะสลับเป็นโหมดใช้งานทั่วไป", async () => {
+      window.showConfirmModal(
+        "ยืนยันการออกจากระบบ",
+        "ระบบจะสลับเป็นโหมดใช้งานทั่วไป\n\nข้อมูลของบัญชีนี้ยังถูกเก็บแยกไว้ในเครื่อง (ไม่ปนกับร้านอื่น) เมื่อล็อกอินบัญชีเดิมอีกครั้งจะโหลดกลับมาอัตโนมัติ",
+        async () => {
         try {
           if (window.unsubTransactions) { window.unsubTransactions(); window.unsubTransactions = null; }
           if (window.unsubSettings) { window.unsubSettings(); window.unsubSettings = null; }
           await signOut(auth);
-          // Clear IDB structured stores + LS flags (privacy: no leftover txs)
-          if (SomtumStore.clearAllUserData) {
+          // Approach A: do NOT wipe the account DB — switch to isolated guest scope
+          if (SomtumStore.switchScope) {
+            await SomtumStore.switchScope(null);
+          } else if (SomtumStore.clearAllUserData) {
             await SomtumStore.clearAllUserData();
-          } else {
-            SomtumStore.removeItem('somtumAppData');
-            SomtumStore.removeItem('somtumLastSyncedTimestamp');
-            SomtumStore.removeItem('somtumHasUnsyncedData');
-            SomtumStore.removeItem('somtumDataOwnerUid');
-            SomtumStore.removeItem('somtumAutoBackup');
-            SomtumStore.removeItem('somtumAutoBackupTime');
-            SomtumStore.removeItem('somtumAutoBackupUid');
-            SomtumStore.removeItem('somtumLastGoalNotified');
           }
           if (typeof lastAutoBackupHash !== 'undefined') lastAutoBackupHash = '';
-          window.appData = {
-            transactions: [],
-            categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
-            materials: [...window.DEFAULT_MATERIALS],
-            equipments: [...window.DEFAULT_EQUIPMENTS],
-            customGoal: null
-          };
           window.__txCacheLoaded = false;
           window.__loadedRange = { start: null, end: null };
-          window.refreshDashboard();
-          window.showToast('ออกจากระบบแล้ว');
+          // Load guest-scope data (may be empty or prior guest entries)
+          if (typeof window.__hydrateAppDataFromStoreAsync === 'function') {
+            await window.__hydrateAppDataFromStoreAsync();
+          } else {
+            window.appData = {
+              transactions: [],
+              categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
+              materials: [...window.DEFAULT_MATERIALS],
+              equipments: [...window.DEFAULT_EQUIPMENTS],
+              customGoal: null,
+              customGoalPercent: null
+            };
+          }
+          if (typeof window.refreshDashboard === 'function') window.refreshDashboard();
+          window.showToast('ออกจากระบบแล้ว — โหมดใช้งานทั่วไป');
         } catch (error) {
           console.error("Logout failed:", error);
         }
@@ -213,70 +215,181 @@ const firebaseConfig = {
       const btnLogout = document.getElementById('btnLogoutGoogle');
 
       if (user) {
-        avatar.src = user.photoURL || 'https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png';
+        avatar.src = user.photoURL || './icon-192.png';
         nameElem.innerText = user.displayName || user.email || 'ผู้ใช้ Google';
         if (statusElem) statusElem.innerText = 'เชื่อมต่อ Google แล้ว — พร้อมซิงค์ Cloud';
         if (badge) badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-emerald-500 border-2 border-white dark:border-gray-800 rounded-full';
         btnLogin.classList.add('hidden');
         btnLogout.classList.remove('hidden');
 
-        // Safety: classic script may not have finished early-load yet if module
-        // ran first. Re-hydrate from localStorage before guest-merge decision.
+        // Snapshot guest-scope data BEFORE switching (for optional merge prompt)
+        let guestSnapshot = null;
         try {
-          // Prefer full IDB history for guest-merge decision (not just current filter range)
-          if (SomtumStore.getAllTx) {
-            const all = await SomtumStore.getAllTx();
-            if (all && all.length) {
-              window.appData.transactions = all;
+          const wasGuest = !SomtumStore.activeScope || SomtumStore.activeScope === 'guest';
+          if (wasGuest) {
+            let guestTx = [];
+            if (SomtumStore.getAllTx) guestTx = await SomtumStore.getAllTx();
+            const guestMeta = SomtumStore.getMeta ? await SomtumStore.getMeta() : null;
+            if ((guestTx && guestTx.length) || (guestMeta && guestMeta.categories)) {
+              guestSnapshot = {
+                transactions: guestTx || [],
+                categories: (guestMeta && guestMeta.categories) || (window.appData && window.appData.categories) || JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
+                materials: (guestMeta && guestMeta.materials) || (window.appData && window.appData.materials) || [...window.DEFAULT_MATERIALS],
+                equipments: (guestMeta && guestMeta.equipments) || (window.appData && window.appData.equipments) || [...window.DEFAULT_EQUIPMENTS],
+                customGoal: guestMeta && guestMeta.customGoal != null ? guestMeta.customGoal : (window.appData && window.appData.customGoal) || null,
+                customGoalPercent: guestMeta && guestMeta.customGoalPercent != null ? guestMeta.customGoalPercent : (window.appData && window.appData.customGoalPercent) || null
+              };
             }
           }
-          if (SomtumStore.getMeta) {
-            const meta = await SomtumStore.getMeta();
-            if (meta) {
-              if (meta.categories) window.appData.categories = meta.categories;
-              if (meta.materials) window.appData.materials = meta.materials;
-              if (meta.equipments) window.appData.equipments = meta.equipments;
-              if (meta.customGoal !== undefined) window.appData.customGoal = meta.customGoal;
-            }
+        } catch (snapErr) {
+          console.warn('guest snapshot failed', snapErr);
+        }
+
+        // Approach A: open isolated IDB for this uid (does not touch guest / other uids)
+        try {
+          if (SomtumStore.switchScope) {
+            await SomtumStore.switchScope(user.uid);
+          } else {
+            SomtumStore.setItem('somtumDataOwnerUid', user.uid);
           }
-          const raw = SomtumStore.getItem('somtumAppData');
-          if (raw && typeof window.sanitizeAppData === 'function') {
-            const parsed = window.sanitizeAppData(JSON.parse(raw));
-            const memLen = (window.appData && window.appData.transactions) ? window.appData.transactions.length : 0;
-            const diskLen = (parsed.transactions || []).length;
-            if (diskLen > memLen) {
-              window.appData = parsed;
-            } else if (!window.appData || !Array.isArray(window.appData.transactions)) {
-              window.appData = parsed;
+        } catch (scopeErr) {
+          console.error('switchScope failed', scopeErr);
+        }
+
+        window.__txCacheLoaded = false;
+        window.__loadedRange = { start: null, end: null };
+
+        // Hydrate from THIS user's scope only
+        try {
+          if (typeof window.__hydrateAppDataFromStoreAsync === 'function') {
+            await window.__hydrateAppDataFromStoreAsync();
+          } else {
+            if (SomtumStore.getAllTx) {
+              const all = await SomtumStore.getAllTx();
+              if (all) window.appData.transactions = all;
             }
+            if (SomtumStore.getMeta) {
+              const meta = await SomtumStore.getMeta();
+              if (meta) {
+                if (meta.categories) window.appData.categories = meta.categories;
+                if (meta.materials) window.appData.materials = meta.materials;
+                if (meta.equipments) window.appData.equipments = meta.equipments;
+                if (meta.customGoal !== undefined) window.appData.customGoal = meta.customGoal;
+                if (meta.customGoalPercent !== undefined) window.appData.customGoalPercent = meta.customGoalPercent;
+              }
+            }
+            window.appData = window.sanitizeAppData(window.appData || {});
           }
-          window.appData = window.sanitizeAppData(window.appData || {});
         } catch (e) {
           console.warn('Auth hydrate failed:', e);
         }
 
-        const lastOwnerUid = SomtumStore.getItem('somtumDataOwnerUid');
-        const localTransactions = (window.appData && window.appData.transactions) || [];
+        const userTxCount = (window.appData && window.appData.transactions)
+          ? window.appData.transactions.length
+          : 0;
+        const guestTxCount = guestSnapshot && guestSnapshot.transactions
+          ? guestSnapshot.transactions.length
+          : 0;
 
-        if (lastOwnerUid === user.uid) {
-          window.initFirestoreListeners();
-        } else if (localTransactions.length > 0) {
-          pendingGuestData = JSON.parse(JSON.stringify(window.appData));
-          document.getElementById('guestMergeModal').classList.remove('hidden');
+        // Merge prompt only when: user scope is empty AND guest had local data
+        if (userTxCount === 0 && guestTxCount > 0) {
+          pendingGuestData = JSON.parse(JSON.stringify(guestSnapshot));
+          const bakModal = document.getElementById('backupRemindModal');
+          if (bakModal) bakModal.classList.add('hidden');
+          const mergeModal = document.getElementById('guestMergeModal');
+          if (mergeModal) mergeModal.classList.remove('hidden');
         } else {
           SomtumStore.setItem('somtumDataOwnerUid', user.uid);
           window.initFirestoreListeners();
         }
       } else {
-        avatar.src = 'https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png';
+        avatar.src = './icon-192.png';
         nameElem.innerText = 'ผู้ใช้งานทั่วไป (ยังไม่ได้ล็อกอิน)';
         statusElem.innerText = 'บันทึกข้อมูลเฉพาะในเครื่องนี้';
         badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-gray-400 border-2 border-white rounded-full';
         btnLogin.classList.remove('hidden');
         btnLogout.classList.add('hidden');
         document.getElementById('btnSyncNow').classList.add('hidden');
+
+        // Ensure guest scope is active when signed out (e.g. session expired)
+        try {
+          if (SomtumStore.switchScope && SomtumStore.activeScope !== 'guest') {
+            await SomtumStore.switchScope(null);
+            window.__txCacheLoaded = false;
+            window.__loadedRange = { start: null, end: null };
+            if (typeof window.__hydrateAppDataFromStoreAsync === 'function') {
+              await window.__hydrateAppDataFromStoreAsync();
+            }
+            if (typeof window.refreshDashboard === 'function') window.refreshDashboard();
+          }
+        } catch (e) {
+          console.warn('guest scope restore failed', e);
+        }
       }
     });
+
+    /**
+     * Merge category subs trees by node name (case-insensitive).
+     * - string leaf and branch with same name → keep branch, merge children
+     * - two branches → recursive children merge
+     * - local order preserved; cloud-only nodes appended
+     */
+    window.mergeSubsByName = function(localSubs, cloudSubs) {
+      const local = Array.isArray(localSubs) ? localSubs : [];
+      const cloud = Array.isArray(cloudSubs) ? cloudSubs : [];
+
+      function nodeName(n) {
+        if (typeof n === 'string') return n;
+        if (n && typeof n === 'object' && typeof n.name === 'string') return n.name;
+        return '';
+      }
+      function nodeChildren(n) {
+        if (typeof n === 'string') return [];
+        if (n && typeof n === 'object' && Array.isArray(n.children)) return n.children;
+        return [];
+      }
+      function isBranch(n) {
+        return n && typeof n === 'object' && typeof n.name === 'string';
+      }
+
+      const map = new Map(); // key = lower name → { name, childrenArr | null }
+      const order = [];
+
+      function upsert(node, preferCloudChildren) {
+        const name = nodeName(node).trim();
+        if (!name) return;
+        const key = name.toLowerCase();
+        const kids = nodeChildren(node);
+        if (!map.has(key)) {
+          order.push(key);
+          if (kids.length > 0 || isBranch(node)) {
+            map.set(key, { name: name, children: kids.slice() });
+          } else {
+            map.set(key, { name: name, children: null }); // pure leaf
+          }
+          return;
+        }
+        const cur = map.get(key);
+        // Prefer preserving original display casing from first insert (local)
+        if (kids.length > 0) {
+          if (cur.children == null) cur.children = [];
+          cur.children = window.mergeSubsByName(cur.children, kids);
+        } else if (isBranch(node) && cur.children == null) {
+          // empty branch stays leaf unless we already have children
+        }
+      }
+
+      local.forEach(function(n) { upsert(n, false); });
+      cloud.forEach(function(n) { upsert(n, true); });
+
+      return order.map(function(key) {
+        const cur = map.get(key);
+        if (cur.children && cur.children.length > 0) {
+          return { name: cur.name, children: cur.children };
+        }
+        return cur.name;
+      });
+    };
 
     window.resolveGuestDataConflict = async function(action) {
       document.getElementById('guestMergeModal').classList.add('hidden');
@@ -303,14 +416,17 @@ const firebaseConfig = {
               cloudCats.forEach(cloudCat => {
                 let localCat = mergedCategories[type].find(c => c.name.trim().toLowerCase() === cloudCat.name.trim().toLowerCase());
                 if (localCat) {
-                  if (cloudCat.subs) localCat.subs = Array.from(new Set([...(localCat.subs || []), ...cloudCat.subs]));
+                  if (cloudCat.subs) {
+                    localCat.subs = window.mergeSubsByName(localCat.subs || [], cloudCat.subs || []);
+                  }
                   if (cloudCat.flags) {
                     localCat.flags = localCat.flags || {};
                     if (cloudCat.flags.isMaterialCategory) localCat.flags.isMaterialCategory = true;
                     if (cloudCat.flags.isEquipmentCategory) localCat.flags.isEquipmentCategory = true;
                   }
                 } else {
-                  mergedCategories[type].push(cloudCat);
+                  // Deep-clone cloud cat so later local edits do not mutate the snapshot
+                  mergedCategories[type].push(JSON.parse(JSON.stringify(cloudCat)));
                 }
               });
             }
@@ -339,6 +455,7 @@ const firebaseConfig = {
           materials: window.appData.materials,
           equipments: window.appData.equipments,
           customGoal: window.appData.customGoal,
+          customGoalPercent: window.appData.customGoalPercent,
           updatedAt: new Date().toISOString()
         }, { merge: true });
 
@@ -351,6 +468,7 @@ const firebaseConfig = {
           materials: pendingGuestData.materials,
           equipments: pendingGuestData.equipments,
           customGoal: pendingGuestData.customGoal,
+          customGoalPercent: pendingGuestData.customGoalPercent,
           updatedAt: new Date().toISOString()
         });
         const txCollRef = collection(db, "users", window.currentUser.uid, "transactions");
@@ -375,15 +493,27 @@ const firebaseConfig = {
         if (count > 0) await batch.commit();
         window.showToast('อัปโหลดข้อมูลเครื่องทับ Cloud เรียบร้อย');
       } else {
-        SomtumStore.removeItem('somtumAppData');
+        // "ใช้ข้อมูลบน Cloud เท่านั้น" — ล้าง tx store + meta ทั้งหมด ไม่ใช่แค่ key เดียว
+        if (SomtumStore.clearAllUserData) {
+          try {
+            await SomtumStore.clearAllUserData();
+          } catch (e) {
+            console.error('clearAllUserData (cloud-only) failed', e);
+            SomtumStore.removeItem('somtumAppData');
+          }
+        } else {
+          SomtumStore.removeItem('somtumAppData');
+        }
         window.appData = {
           transactions: [],
           categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
           materials: [...window.DEFAULT_MATERIALS],
           equipments: [...window.DEFAULT_EQUIPMENTS],
-          customGoal: null
+          customGoal: null,
+          customGoalPercent: null
         };
       }
+      // setItem หลัง clearAll เพื่อ restore owner uid ที่ถูก wipe
       SomtumStore.setItem('somtumDataOwnerUid', window.currentUser.uid);
       pendingGuestData = null;
       window.initFirestoreListeners();
@@ -413,6 +543,7 @@ const firebaseConfig = {
           if (data.materials) window.appData.materials = data.materials;
           if (data.equipments) window.appData.equipments = data.equipments;
           if (data.customGoal !== undefined) window.appData.customGoal = data.customGoal;
+          if (data.customGoalPercent !== undefined) window.appData.customGoalPercent = data.customGoalPercent;
           window.appData = window.sanitizeAppData(window.appData);
           window.saveLocalOnly();
           window.refreshDashboard();
@@ -422,6 +553,7 @@ const firebaseConfig = {
             materials: window.appData.materials || [],
             equipments: window.appData.equipments || [],
             customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+            customGoalPercent: (window.appData.customGoalPercent !== null && window.appData.customGoalPercent !== undefined && !isNaN(Number(window.appData.customGoalPercent))) ? Number(window.appData.customGoalPercent) : null,
             updatedAt: new Date().toISOString()
           }));
           setDoc(settingsRef, bootPayload);
@@ -508,6 +640,7 @@ const firebaseConfig = {
           materials: window.appData.materials || [],
           equipments: window.appData.equipments || [],
           customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+            customGoalPercent: (window.appData.customGoalPercent !== null && window.appData.customGoalPercent !== undefined && !isNaN(Number(window.appData.customGoalPercent))) ? Number(window.appData.customGoalPercent) : null,
           updatedAt: new Date().toISOString()
         }));
         await setDoc(settingsRef, payload, { merge: true });
@@ -575,6 +708,7 @@ const firebaseConfig = {
           materials: window.appData.materials || [],
           equipments: window.appData.equipments || [],
           customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+            customGoalPercent: (window.appData.customGoalPercent !== null && window.appData.customGoalPercent !== undefined && !isNaN(Number(window.appData.customGoalPercent))) ? Number(window.appData.customGoalPercent) : null,
           updatedAt: new Date().toISOString()
         })), { merge: true });
 
@@ -702,6 +836,7 @@ const firebaseConfig = {
             materials: window.appData.materials || [],
             equipments: window.appData.equipments || [],
             customGoal: (window.appData.customGoal && Number(window.appData.customGoal) > 0) ? Number(window.appData.customGoal) : null,
+            customGoalPercent: (window.appData.customGoalPercent !== null && window.appData.customGoalPercent !== undefined && !isNaN(Number(window.appData.customGoalPercent))) ? Number(window.appData.customGoalPercent) : null,
             updatedAt: new Date().toISOString()
           }));
           const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
@@ -790,6 +925,7 @@ const firebaseConfig = {
     };
 
     // saveLocalOnly: meta + flags only (transactions already in IDB per-record)
+    // Overrides the early stub in app.js once this module has loaded.
     window.saveLocalOnly = function() {
       try {
         if (window.SomtumStore && SomtumStore.persistAppState) {
@@ -797,9 +933,13 @@ const firebaseConfig = {
           SomtumStore.persistAppState(window.appData, { writeAllTx: false }).catch(function(e) {
             console.error('persistAppState', e);
           });
-        } else {
+        } else if (window.SomtumStore && SomtumStore.setItem) {
           // Fallback legacy path
-          SomtumStore.setItem('somtumAppData', JSON.stringify(window.appData));
+          try {
+            SomtumStore.setItem('somtumAppData', JSON.stringify(window.appData));
+          } catch (e2) {
+            console.error('legacy setItem appData failed', e2);
+          }
         }
         if (!navigator.onLine && window.currentUser) {
           SomtumStore.setItem('somtumHasUnsyncedData', 'true');
@@ -811,6 +951,6 @@ const firebaseConfig = {
         }
       } catch (e) {
         console.error("saveLocalOnly failed:", e);
-        throw e;
+        // Do not throw — callers already handle local save failures at putTx level
       }
     };
