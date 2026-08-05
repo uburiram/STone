@@ -103,3 +103,13 @@ node tests/e2e-flow.test.js
 ```
 
 หมายเหตุ: key ข้อมูลในเครื่องยังใช้ prefix `somtum*` เพื่อไม่ให้ข้อมูลเก่าหาย ชื่อที่แสดงและมอดูลผู้ดูแลใช้ **STone**
+
+## CSS build (Tailwind local)
+
+```bash
+# ใช้ Tailwind standalone CLI
+./tailwindcss -i ./src/input.css -o ./css/stone.css --minify
+# หรือ: npx tailwindcss -i ./src/input.css -o ./css/stone.css --minify
+```
+
+อย่าใช้ `cdn.tailwindcss.com` ใน production แล้ว — ใช้ `./css/stone.css`

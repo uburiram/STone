@@ -6,14 +6,12 @@
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
     script-src 'self' 'unsafe-inline'
-      https://cdn.tailwindcss.com
       https://cdnjs.cloudflare.com
       https://www.gstatic.com
       https://apis.google.com
       https://accounts.google.com
       https://cdn.jsdelivr.net;
     style-src 'self' 'unsafe-inline'
-      https://cdn.tailwindcss.com
       https://cdnjs.cloudflare.com
       https://fonts.googleapis.com;
     font-src 'self' data:
@@ -35,7 +33,7 @@
       https://cdnjs.cloudflare.com
       https://raw.githubusercontent.com
       https://github.com
-      https://cdn.tailwindcss.com;
+;
     frame-src https://accounts.google.com https://*.google.com https://*.firebaseapp.com https://appleid.apple.com;
     worker-src 'self';
     manifest-src 'self' blob:;
@@ -52,34 +50,14 @@
   <link rel="icon" type="image/png" href="./favicon-32.png">
   <link rel="apple-touch-icon" href="./apple-touch-icon-180.png">
   
-  <!-- External Resources -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Local compiled Tailwind (no Play CDN) + CDN libs with SRI -->
+  <link rel="stylesheet" href="./css/stone.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0" crossorigin="anonymous" referrerpolicy="no-referrer">
   <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          fontFamily: { prompt: ['Prompt', 'sans-serif'] },
-          colors: {
-            brand: {
-              50: '#fff7ed',
-              100: '#ffedd5',
-              500: '#f97316',
-              600: '#ea580c',
-              700: '#c2410c'
-            }
-          }
-        }
-      }
-    }
-  </script>
-  
-  <!-- PDF Libraries -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+
+  <!-- PDF Libraries (SRI) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" integrity="sha384-fCAW/rDWORTbQXSiB7mOg0QtQ5c+r0f544y6XoKjuVva0nMBlCpNUjiFeG5iMdS3" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   
   <style>
     body {
