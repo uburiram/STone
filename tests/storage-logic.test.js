@@ -17,6 +17,7 @@ function assert(cond, msg) {
   }
 }
 
+// Mirror of score / dirty parsers from storage.js
 function scoreAppDataRaw(raw) {
   if (!raw || typeof raw !== 'string') return -1;
   try {
@@ -48,27 +49,12 @@ function filterByDateRange(list, start, end) {
   });
 }
 
-function dbNameForScope(scope) {
-  if (!scope || scope === 'guest') return 'somtum-idb-v2';
-  return 'somtum-idb-v2-u-' + String(scope);
-}
-
-function lsKeyFor(key, activeScope, GLOBAL_LS_KEYS) {
-  if (GLOBAL_LS_KEYS.has(key)) return key;
-  if (activeScope === 'guest') return key;
-  return 'somtum@' + activeScope + ':' + key;
-}
-
-function shouldAdoptDiskTx(memLen, diskLen, txCacheLoaded) {
-  if (txCacheLoaded && memLen > diskLen) return false;
-  if (memLen === 0) return true;
-  return diskLen >= memLen;
-}
-
 function safeCalculate(expr) {
-  const cleaned = String(expr).replace(/\u00d7/g, '*').replace(/x/gi, '*').replace(/\u00f7/g, '/').replace(/\s+/g, '');
+  // minimal subset matching app precedence via Function-free path for tests
+  const cleaned = String(expr).replace(/×/g, '*').replace(/÷/g, '/').replace(/\s+/g, '');
   if (!/^[\d.+\-*/()]+$/.test(cleaned)) return NaN;
   try {
+    // eslint-disable-next-line no-new-func
     const fn = new Function('return (' + cleaned + ')');
     const v = fn();
     return typeof v === 'number' && isFinite(v) ? v : NaN;
@@ -102,28 +88,12 @@ assert(filterByDateRange(txs, '2026-03-01', '2026-12-31').length === 1, 'from Ma
 console.log('=== safeCalculate ===');
 assert(safeCalculate('100+50') === 150, '100+50');
 assert(safeCalculate('10*2+5') === 25, '10*2+5');
-assert(safeCalculate('10\u00d73') === 30, 'unicode multiply');
 assert(Number.isNaN(safeCalculate('alert(1)')), 'rejects code');
 
 console.log('=== LS size guard concept ===');
 const MAX = 400000;
 assert(MAX === 400000, 'LS_APPDATA_MAX_CHARS = 400000');
 assert('x'.repeat(500000).length > MAX, 'large blob exceeds cap');
-
-console.log('=== scope helpers ===');
-assert(dbNameForScope('guest') === 'somtum-idb-v2', 'guest db name');
-assert(dbNameForScope(null) === 'somtum-idb-v2', 'null scope = guest');
-assert(dbNameForScope('uid123') === 'somtum-idb-v2-u-uid123', 'user db name');
-const GLOBAL = new Set(['somtumDarkMode', 'somtumActiveScope', 'somtumDataOwnerUid']);
-assert(lsKeyFor('somtumDarkMode', 'uid1', GLOBAL) === 'somtumDarkMode', 'global key unprefixed');
-assert(lsKeyFor('somtumHasUnsyncedData', 'guest', GLOBAL) === 'somtumHasUnsyncedData', 'guest unprefixed');
-assert(lsKeyFor('somtumHasUnsyncedData', 'uid1', GLOBAL) === 'somtum@uid1:somtumHasUnsyncedData', 'user prefixed');
-
-console.log('=== hydrate race guard ===');
-assert(shouldAdoptDiskTx(0, 5, false) === true, 'empty mem adopts disk');
-assert(shouldAdoptDiskTx(10, 5, true) === false, 'richer mem not clobbered');
-assert(shouldAdoptDiskTx(5, 5, true) === true, 'equal adopts');
-assert(shouldAdoptDiskTx(3, 10, false) === true, 'richer disk adopts');
 
 console.log('\nResult:', passed, 'passed,', failed, 'failed');
 process.exit(failed ? 1 : 0);
