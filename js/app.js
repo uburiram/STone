@@ -101,6 +101,97 @@
     window.DEFAULT_MATERIALS = ['มะละกอ', 'พริกสด/พริกแห้ง', 'กระเทียม', 'มะนาว', 'น้ำปลา', 'ปลาร้า', 'ปูดำ/ปูม้า', 'หมูกรอบ/หมูยอ', 'เส้นขนมจีน', 'ถั่วฝักยาว', 'ผงชูรส', 'ถุงพลาสติก/กล่อง'];
     window.DEFAULT_EQUIPMENTS = ['ครก/ไม้ตีครก', 'จานชาม/ช้อนส้อม', 'โต๊ะเก้าอี้', 'เขียง/มีด'];
 
+
+    /** Max category tree depth (level 1 = main category, levels 2–5 = nested under it) */
+    window.MAX_CAT_DEPTH = 5;
+    /** Separator for nested path stored in transaction.subCategory (legacy plain strings still work) */
+    window.CAT_PATH_SEP = ' › ';
+
+    window.isCatBranch = function(node) {
+      return node && typeof node === 'object' && typeof node.name === 'string';
+    };
+    window.catNodeName = function(node) {
+      if (typeof node === 'string') return node;
+      if (window.isCatBranch(node)) return node.name;
+      return '';
+    };
+    window.catNodeChildren = function(node) {
+      if (typeof node === 'string') return [];
+      if (window.isCatBranch(node) && Array.isArray(node.children)) return node.children;
+      return [];
+    };
+    /** Recursively sanitize a subs array. Preserves legacy string leaves. Depth = nesting under main category (1..4 → total levels 2..5). */
+    window.sanitizeSubsTree = function(subs, depth) {
+      if (!Array.isArray(subs)) return [];
+      if (depth > window.MAX_CAT_DEPTH - 1) return []; // main cat is depth 0 of tree root; children start at depth 1
+      const out = [];
+      const seen = new Set();
+      for (let i = 0; i < subs.length; i++) {
+        const s = subs[i];
+        if (typeof s === 'string') {
+          const name = String(s).trim().slice(0, 200);
+          if (!name) continue;
+          const key = name.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(name);
+        } else if (window.isCatBranch(s)) {
+          const name = String(s.name).trim().slice(0, 200);
+          if (!name) continue;
+          const key = name.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const children = window.sanitizeSubsTree(s.children, depth + 1);
+          if (children.length > 0) {
+            out.push({ name: name, children: children });
+          } else {
+            // empty branch → store as plain leaf (backward-friendly)
+            out.push(name);
+          }
+        }
+      }
+      return out;
+    };
+    /** Walk tree by name path (array of names under main cat). Returns node or null. */
+    window.findCatNodeByPath = function(subs, namePath) {
+      let list = Array.isArray(subs) ? subs : [];
+      let node = null;
+      for (let d = 0; d < namePath.length; d++) {
+        const want = namePath[d];
+        node = null;
+        for (let i = 0; i < list.length; i++) {
+          if (window.catNodeName(list[i]) === want) {
+            node = list[i];
+            break;
+          }
+        }
+        if (node == null) return null;
+        list = window.catNodeChildren(node);
+      }
+      return node;
+    };
+    /** Direct children list for a path under category.subs (empty path → top-level subs). */
+    window.getChildrenAtPath = function(subs, namePath) {
+      if (!namePath || namePath.length === 0) return Array.isArray(subs) ? subs : [];
+      const node = window.findCatNodeByPath(subs, namePath);
+      return window.catNodeChildren(node);
+    };
+    /** True if this category has any selectable sub structure (tree or flat). */
+    window.categoryHasSubs = function(cat) {
+      return !!(cat && Array.isArray(cat.subs) && cat.subs.length > 0);
+    };
+    /** Collect leaf names (flat) — for legacy includes checks. */
+    window.collectLeafNames = function(subs, acc) {
+      acc = acc || [];
+      (subs || []).forEach(function(n) {
+        const kids = window.catNodeChildren(n);
+        if (kids.length === 0) acc.push(window.catNodeName(n));
+        else window.collectLeafNames(kids, acc);
+      });
+      return acc;
+    };
+
+
     window.appData = {
       transactions: [],
       categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
@@ -156,7 +247,8 @@
         data.categories[type] = data.categories[type].filter(c => c && typeof c.name === 'string').map(c => {
           const cleaned = {
             name: String(c.name).slice(0, 100),
-            subs: Array.isArray(c.subs) ? c.subs.filter(s => typeof s === 'string').map(s => String(s).slice(0, 200)) : []
+            // Nested tree up to MAX_CAT_DEPTH; legacy string[] leaves preserved as-is
+            subs: window.sanitizeSubsTree(Array.isArray(c.subs) ? c.subs : [], 1)
           };
           // Firestore rejects undefined — only include flags when present
           if (c.flags && typeof c.flags === 'object') {
@@ -1060,53 +1152,149 @@
       const type = document.getElementById('txType').value;
       const catSelect = document.getElementById('txCategory');
       const subContainer = document.getElementById('subCatContainer');
-      const subSelect = document.getElementById('txSubCategory');
+      const nestedContainer = document.getElementById('nestedSubLevels');
       const chkContainer = document.getElementById('multiMaterialContainer');
       const chkList = document.getElementById('materialsChecklist');
       const chkLabel = document.getElementById('checklistLabel');
 
-      const catObj = window.appData.categories[type].find(c => c.name === catSelect.value);
-      subContainer.classList.add('hidden');
-      chkContainer.classList.add('hidden');
+      const catObj = (window.appData.categories[type] || []).find(c => c.name === catSelect.value);
+      if (subContainer) subContainer.classList.add('hidden');
+      if (chkContainer) chkContainer.classList.add('hidden');
+      if (nestedContainer) nestedContainer.innerHTML = '';
 
-      if (catObj) {
-        const isMaterial = catObj.flags && catObj.flags.isMaterialCategory;
-        const isEquipment = catObj.flags && catObj.flags.isEquipmentCategory;
+      if (!catObj) return;
 
-        if (isMaterial || isEquipment) {
-          chkContainer.classList.remove('hidden');
-          chkLabel.innerHTML = isMaterial ? `<i class="fa-solid fa-basket-shopping text-brand-500 mr-1"></i> เลือกวัตถุดิบ:` : `<i class="fa-solid fa-toolbox text-brand-500 mr-1"></i> เลือกอุปกรณ์:`;
-          chkList.innerHTML = '';
+      const isMaterial = catObj.flags && catObj.flags.isMaterialCategory;
+      const isEquipment = catObj.flags && catObj.flags.isEquipmentCategory;
 
-          const sourceList = isMaterial ? window.appData.materials : window.appData.equipments;
-          let existingItems = [];
-          if (_editTxIdTemp && _editTxIdTemp.subCategory) {
-            existingItems = _editTxIdTemp.subCategory.split(', ').map(s => s.trim());
-          }
+      if (isMaterial || isEquipment) {
+        chkContainer.classList.remove('hidden');
+        chkLabel.innerHTML = isMaterial
+          ? `<i class="fa-solid fa-basket-shopping text-brand-500 mr-1"></i> เลือกวัตถุดิบ:`
+          : `<i class="fa-solid fa-toolbox text-brand-500 mr-1"></i> เลือกอุปกรณ์:`;
+        chkList.innerHTML = '';
 
-          sourceList.forEach((item) => {
-            const checked = existingItems.includes(item) ? 'checked' : '';
-            chkList.innerHTML += `
-              <label class="flex items-center space-x-2 bg-white p-2 rounded-xl border border-gray-100 shadow-sm cursor-pointer hover:border-brand-300">
-                <input type="checkbox" name="matCheck" value="${escapeHTML(item)}" class="text-brand-500 focus:ring-brand-500 rounded" ${checked}>
-                <span class="text-[11px] text-gray-700 font-medium">${escapeHTML(item)}</span>
-              </label>`;
-          });
-        } else if (catObj.subs && catObj.subs.length > 0) {
-          subContainer.classList.remove('hidden');
-          subSelect.innerHTML = '';
-          catObj.subs.forEach(s => {
-            const opt = document.createElement('option');
-            opt.value = s;
-            opt.innerText = s;
-            subSelect.appendChild(opt);
-          });
-          if (_editTxIdTemp && _editTxIdTemp.subCategory && catObj.subs.includes(_editTxIdTemp.subCategory)) {
-            subSelect.value = _editTxIdTemp.subCategory;
-          }
+        const sourceList = isMaterial ? window.appData.materials : window.appData.equipments;
+        let existingItems = [];
+        if (_editTxIdTemp && _editTxIdTemp.subCategory) {
+          // multi-select uses ", " join — do not split nested path sep
+          existingItems = _editTxIdTemp.subCategory.split(', ').map(s => s.trim()).filter(Boolean);
         }
+
+        (sourceList || []).forEach((item) => {
+          const checked = existingItems.includes(item) ? 'checked' : '';
+          chkList.innerHTML += `
+            <label class="flex items-center space-x-2 bg-white p-2 rounded-xl border border-gray-100 shadow-sm cursor-pointer hover:border-brand-300">
+              <input type="checkbox" name="matCheck" value="${escapeHTML(item)}" class="text-brand-500 focus:ring-brand-500 rounded" ${checked}>
+              <span class="text-[11px] text-gray-700 font-medium">${escapeHTML(item)}</span>
+            </label>`;
+        });
+        return;
       }
-    }
+
+      if (window.categoryHasSubs(catObj)) {
+        subContainer.classList.remove('hidden');
+        // Pre-fill path from edit if present
+        let prePath = [];
+        if (_editTxIdTemp && _editTxIdTemp.subCategory && _editTxIdTemp.subCategory.indexOf(', ') === -1) {
+          prePath = String(_editTxIdTemp.subCategory).split(window.CAT_PATH_SEP).map(s => s.trim()).filter(Boolean);
+        } else if (_editTxIdTemp && _editTxIdTemp.subCategory) {
+          // legacy single sub (no path sep, no multi comma list treated as path)
+          const single = String(_editTxIdTemp.subCategory).trim();
+          if (single && single.indexOf(',') === -1) prePath = [single];
+        }
+        window.renderNestedSubSelects(catObj.subs, prePath, 0);
+      }
+    };
+
+    /** Cascading selects for nested category path (max depth under main cat). */
+    window.renderNestedSubSelects = function(rootSubs, prePath, fromLevel) {
+      const nestedContainer = document.getElementById('nestedSubLevels');
+      if (!nestedContainer) return;
+      // Remove levels from fromLevel onward
+      const existing = nestedContainer.querySelectorAll('[data-sub-level]');
+      existing.forEach(function(el) {
+        const lv = Number(el.getAttribute('data-sub-level'));
+        if (lv >= fromLevel) el.remove();
+      });
+
+      // Build path selected so far from levels 0..fromLevel-1
+      const pathSoFar = [];
+      for (let lv = 0; lv < fromLevel; lv++) {
+        const sel = nestedContainer.querySelector('select[data-sub-level="' + lv + '"]');
+        if (sel && sel.value) pathSoFar.push(sel.value);
+        else break;
+      }
+
+      const children = window.getChildrenAtPath(rootSubs, pathSoFar);
+      if (!children || children.length === 0) return;
+
+      // Depth limit: fromLevel is 0-based under main cat; max levels under main = MAX_CAT_DEPTH - 1
+      if (fromLevel >= window.MAX_CAT_DEPTH - 1) return;
+
+      const wrap = document.createElement('div');
+      wrap.setAttribute('data-sub-level', String(fromLevel));
+      wrap.className = 'mb-1.5';
+      const label = document.createElement('label');
+      label.className = 'block text-[11px] font-medium text-gray-600 mb-0.5';
+      label.textContent = fromLevel === 0 ? 'รายการย่อย' : ('ชั้นที่ ' + (fromLevel + 2));
+      const sel = document.createElement('select');
+      sel.setAttribute('data-sub-level', String(fromLevel));
+      sel.className = 'w-full border border-gray-300 rounded-xl px-3 py-2 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm';
+      const emptyOpt = document.createElement('option');
+      emptyOpt.value = '';
+      emptyOpt.textContent = '— เลือก —';
+      sel.appendChild(emptyOpt);
+      children.forEach(function(node) {
+        const opt = document.createElement('option');
+        opt.value = window.catNodeName(node);
+        opt.textContent = window.catNodeName(node);
+        sel.appendChild(opt);
+      });
+      if (prePath && prePath[fromLevel]) {
+        sel.value = prePath[fromLevel];
+      }
+      sel.addEventListener('change', function() {
+        const type = document.getElementById('txType').value;
+        const catSelect = document.getElementById('txCategory');
+        const catObj = (window.appData.categories[type] || []).find(c => c.name === catSelect.value);
+        if (!catObj) return;
+        window.renderNestedSubSelects(catObj.subs, null, fromLevel + 1);
+      });
+      wrap.appendChild(label);
+      wrap.appendChild(sel);
+      nestedContainer.appendChild(wrap);
+
+      // If prePath continues, cascade further
+      if (prePath && prePath[fromLevel]) {
+        window.renderNestedSubSelects(rootSubs, prePath, fromLevel + 1);
+      } else if (sel.value) {
+        window.renderNestedSubSelects(rootSubs, null, fromLevel + 1);
+      }
+    };
+
+    window.collectNestedSubPath = function() {
+      const nestedContainer = document.getElementById('nestedSubLevels');
+      if (!nestedContainer) return '';
+      const path = [];
+      const selects = nestedContainer.querySelectorAll('select[data-sub-level]');
+      const ordered = Array.from(selects).sort(function(a, b) {
+        return Number(a.getAttribute('data-sub-level')) - Number(b.getAttribute('data-sub-level'));
+      });
+      for (let i = 0; i < ordered.length; i++) {
+        const v = ordered[i].value;
+        if (!v) break;
+        path.push(v);
+      }
+      return path.join(window.CAT_PATH_SEP);
+    };
+
+    /** Select / deselect all multi-select checklist items (materials or equipments). */
+    window.toggleAllMaterials = function(checked) {
+      document.querySelectorAll('input[name="matCheck"]').forEach(function(el) {
+        el.checked = !!checked;
+      });
+    };
 
     window.closeTransactionModal = function() {
       document.getElementById('transactionModal').classList.add('hidden');
@@ -1146,8 +1334,14 @@
       if (catObj && (catObj.flags?.isMaterialCategory || catObj.flags?.isEquipmentCategory)) {
         const checked = Array.from(document.querySelectorAll('input[name="matCheck"]:checked')).map(el => el.value);
         subCategory = checked.join(', ');
-      } else if (catObj && catObj.subs && catObj.subs.length > 0) {
-        subCategory = document.getElementById('txSubCategory').value;
+      } else if (catObj && window.categoryHasSubs(catObj)) {
+        // Nested path (or single level) from cascading selects
+        subCategory = window.collectNestedSubPath();
+        // Fallback to legacy single select if present
+        if (!subCategory) {
+          const legacy = document.getElementById('txSubCategory');
+          if (legacy && legacy.value) subCategory = legacy.value;
+        }
       }
 
       const txObj = {
@@ -1760,35 +1954,213 @@
 
     window.renderCategoryTree = function() {
       const list = document.getElementById('fullCategoryTree');
-      if(!list) return;
+      if (!list) return;
       list.innerHTML = '';
 
-      (window.appData.categories[managerType] || []).forEach((cat, i) => {
-        let subs = '';
-        if(cat.subs && cat.subs.length > 0) {
-          subs = cat.subs.map((s, j) => `<span class="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded text-[10px] inline-flex items-center gap-1 mb-1">${escapeHTML(s)} <button onclick="renameSubCategory(${i}, ${j})" class="text-blue-500 hover:text-blue-700" title="แก้ไข"><i class="fa-solid fa-pen text-[9px]"></i></button> <button onclick="deleteSubCategory(${i}, ${j})" class="text-gray-400 hover:text-rose-500" title="ลบ"><i class="fa-solid fa-xmark"></i></button></span>`).join(' ');
-        }
+      (window.appData.categories[managerType] || []).forEach(function(cat, i) {
         let badge = '';
-        if(cat.flags?.isMaterialCategory) badge = `<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-medium">วัตถุดิบ</span>`;
-        if(cat.flags?.isEquipmentCategory) badge = `<span class="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-medium">อุปกรณ์</span>`;
+        if (cat.flags?.isMaterialCategory) badge = `<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-medium">วัตถุดิบ</span>`;
+        if (cat.flags?.isEquipmentCategory) badge = `<span class="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-medium">อุปกรณ์</span>`;
+
+        const isListCat = !!(cat.flags?.isMaterialCategory || cat.flags?.isEquipmentCategory);
+        const treeHtml = isListCat
+          ? '<span class="text-[10px] text-gray-400 italic">เลือกจากลิสต์วัตถุดิบ/อุปกรณ์อัตโนมัติ</span>'
+          : window.renderSubTreeHtml(cat.subs || [], [i], 1);
 
         list.innerHTML += `
           <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3">
             <div class="flex justify-between items-center mb-2">
               <span class="font-bold text-xs text-gray-800 dark:text-gray-100 flex items-center gap-1.5"><i class="fa-solid fa-folder text-brand-500"></i> ${escapeHTML(cat.name)} ${badge}</span>
               <div class="flex items-center gap-2">
-                <button onclick="renameMainCategory(${i})" class="text-blue-500 hover:text-blue-700 text-xs" title="แก้ไขชื่อหมวดหมู่"><i class="fa-solid fa-pen"></i></button>
-                <button onclick="deleteMainCategory(${i})" class="text-gray-400 hover:text-rose-500 text-xs" title="ลบหมวดหมู่"><i class="fa-solid fa-trash"></i></button>
+                <button type="button" onclick="renameMainCategory(${i})" class="text-blue-500 hover:text-blue-700 text-xs" title="แก้ไขชื่อหมวดหมู่"><i class="fa-solid fa-pen"></i></button>
+                <button type="button" onclick="deleteMainCategory(${i})" class="text-gray-400 hover:text-rose-500 text-xs" title="ลบหมวดหมู่"><i class="fa-solid fa-trash"></i></button>
               </div>
             </div>
-            <div class="flex flex-wrap gap-1 mb-2">${subs || (cat.flags?.isMaterialCategory || cat.flags?.isEquipmentCategory ? '<span class="text-[10px] text-gray-400 italic">เลือกจากลิสต์วัตถุดิบ/อุปกรณ์อัตโนมัติ</span>' : '<span class="text-[10px] text-gray-400 italic">ไม่มีรายการย่อย</span>')}</div>
+            <div class="mb-2 space-y-1">${treeHtml}</div>
+            ${isListCat ? '' : `
             <div class="flex gap-1.5">
-              <input type="text" id="newSub-${i}" placeholder="เพิ่มรายการย่อย..." class="flex-1 text-[11px] border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none">
-              <button onclick="addSubCategory(${i})" class="bg-gray-800 dark:bg-gray-600 hover:bg-gray-900 dark:hover:bg-gray-500 text-white text-[11px] px-3 py-1.5 rounded-lg">+ เพิ่ม</button>
-            </div>
+              <input type="text" id="newSub-${i}" placeholder="เพิ่มรายการย่อยชั้น 2..." class="flex-1 text-[11px] border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+              <button type="button" onclick="addSubCategory(${i})" class="bg-gray-800 dark:bg-gray-600 hover:bg-gray-900 dark:hover:bg-gray-500 text-white text-[11px] px-3 py-1.5 rounded-lg">+ เพิ่ม</button>
+            </div>`}
           </div>`;
       });
-    }
+    };
+
+    /**
+     * Render nested subs for category manager.
+     * pathIdx = [catIndex, ...childIndices] for CRUD callbacks.
+     * depth = current tree depth (1 = under main category → level 2 of 5).
+     */
+    window.renderSubTreeHtml = function(subs, pathIdx, depth) {
+      if (!subs || subs.length === 0) {
+        return '<span class="text-[10px] text-gray-400 italic">ไม่มีรายการย่อย</span>';
+      }
+      let html = '';
+      const pad = Math.min((depth - 1) * 12, 48);
+      subs.forEach(function(node, j) {
+        const name = window.catNodeName(node);
+        const kids = window.catNodeChildren(node);
+        const childPath = pathIdx.concat([j]);
+        const pathStr = childPath.join(',');
+        const canAddChild = depth < (window.MAX_CAT_DEPTH - 1); // depth 1..3 can add → max depth 4 under main → total levels 5
+        html += `<div class="border-l-2 border-brand-100 pl-2" style="margin-left:${pad}px">
+          <div class="flex flex-wrap items-center gap-1 mb-1">
+            <span class="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 px-2 py-0.5 rounded text-[10px] inline-flex items-center gap-1">
+              ${kids.length ? '<i class="fa-solid fa-folder-open text-brand-400 text-[9px]"></i>' : '<i class="fa-solid fa-tag text-gray-400 text-[9px]"></i>'}
+              ${escapeHTML(name)}
+              <button type="button" onclick="renameSubCategoryPath('${pathStr}')" class="text-blue-500 hover:text-blue-700" title="แก้ไข"><i class="fa-solid fa-pen text-[9px]"></i></button>
+              <button type="button" onclick="deleteSubCategoryPath('${pathStr}')" class="text-gray-400 hover:text-rose-500" title="ลบ"><i class="fa-solid fa-xmark"></i></button>
+            </span>
+          </div>`;
+        if (kids.length > 0) {
+          html += window.renderSubTreeHtml(kids, childPath, depth + 1);
+        }
+        if (canAddChild) {
+          html += `<div class="flex gap-1 mb-1.5" style="margin-left:4px">
+            <input type="text" id="newNested-${pathStr.replace(/,/g,'-')}" placeholder="เพิ่มชั้นถัดไป (สูงสุด ${window.MAX_CAT_DEPTH} ชั้น)..." class="flex-1 text-[10px] border border-gray-200 dark:border-gray-600 rounded px-1.5 py-1 bg-white dark:bg-gray-800">
+            <button type="button" onclick="addNestedCategory('${pathStr}')" class="bg-brand-500 hover:bg-brand-600 text-white text-[10px] px-2 py-1 rounded">+</button>
+          </div>`;
+        }
+        html += '</div>';
+      });
+      return html;
+    };
+
+    /** Resolve array reference for path [catIdx, ...indices] → parent array + last index */
+    window.resolveCatPath = function(pathStr) {
+      const parts = String(pathStr).split(',').map(Number);
+      if (!parts.length || parts.some(function(n) { return isNaN(n); })) return null;
+      const catIdx = parts[0];
+      const cat = (window.appData.categories[managerType] || [])[catIdx];
+      if (!cat) return null;
+      if (parts.length === 1) {
+        return { cat: cat, parentArr: null, index: catIdx, node: cat, depth: 0 };
+      }
+      let arr = cat.subs;
+      if (!Array.isArray(arr)) return null;
+      for (let d = 1; d < parts.length - 1; d++) {
+        const node = arr[parts[d]];
+        if (node == null) return null;
+        // Promote string leaf to branch if we need to go deeper (should not happen in resolve)
+        if (typeof node === 'string') return null;
+        if (!Array.isArray(node.children)) node.children = [];
+        arr = node.children;
+      }
+      const last = parts[parts.length - 1];
+      return { cat: cat, parentArr: arr, index: last, node: arr[last], depth: parts.length - 1 };
+    };
+
+    window.addNestedCategory = function(pathStr) {
+      const inputId = 'newNested-' + String(pathStr).replace(/,/g, '-');
+      const input = document.getElementById(inputId);
+      const val = input ? input.value.trim() : '';
+      if (!val) return;
+      const resolved = window.resolveCatPath(pathStr);
+      if (!resolved || resolved.node == null) return;
+      // Promote string leaf → branch object so we can attach children
+      let node = resolved.node;
+      if (typeof node === 'string') {
+        node = { name: node, children: [] };
+        resolved.parentArr[resolved.index] = node;
+      }
+      if (!Array.isArray(node.children)) node.children = [];
+      // depth of new child = resolved.depth + 1 (under main); max under main = MAX_CAT_DEPTH - 1
+      if (resolved.depth + 1 >= window.MAX_CAT_DEPTH - 1 && false) { /* allow add at this level; children of new node limited by UI */ }
+      if (resolved.depth >= window.MAX_CAT_DEPTH - 1) {
+        alert('ซ้อนได้สูงสุด ' + window.MAX_CAT_DEPTH + ' ชั้น');
+        return;
+      }
+      const exists = node.children.some(function(c) {
+        return window.catNodeName(c).toLowerCase() === val.toLowerCase();
+      });
+      if (exists) { alert('มีรายการนี้อยู่แล้วในชั้นนี้'); return; }
+      node.children.push(val);
+      if (input) input.value = '';
+      window.syncDataToCloud(true);
+      window.renderCategoryTree();
+      window.showToast('เพิ่มหมวดซ้อนเรียบร้อย');
+    };
+
+    window.renameSubCategoryPath = function(pathStr) {
+      const resolved = window.resolveCatPath(pathStr);
+      if (!resolved || resolved.node == null) return;
+      const oldName = window.catNodeName(resolved.node);
+      window.openRenameModal('แก้ไขรายการย่อย', 'ชื่อใหม่จะถูกอัปเดตในรายการที่บันทึกไว้แล้วด้วย', oldName, async function(trimmed) {
+        if (trimmed === oldName) return;
+        const siblings = resolved.parentArr || [];
+        if (siblings.some(function(s, idx) {
+          return idx !== resolved.index && window.catNodeName(s).toLowerCase() === trimmed.toLowerCase();
+        })) {
+          alert('มีรายการย่อยนี้อยู่แล้ว');
+          return;
+        }
+        if (typeof resolved.node === 'string') {
+          resolved.parentArr[resolved.index] = trimmed;
+        } else if (window.isCatBranch(resolved.node)) {
+          resolved.node.name = trimmed;
+        }
+        // Update transactions: replace segment in nested path or exact match
+        if (typeof window.loadAllTransactions === 'function') {
+          try { await window.loadAllTransactions(); } catch (e) { console.warn(e); }
+        }
+        let updatedCount = 0;
+        const catName = resolved.cat.name;
+        for (const tx of (window.appData.transactions || [])) {
+          if (tx.type !== managerType || tx.category !== catName) continue;
+          let changed = false;
+          if (tx.subCategory === oldName) {
+            tx.subCategory = trimmed;
+            changed = true;
+          } else if (tx.subCategory && tx.subCategory.indexOf(window.CAT_PATH_SEP) >= 0) {
+            const parts = tx.subCategory.split(window.CAT_PATH_SEP).map(function(s) { return s.trim(); });
+            let hit = false;
+            for (let p = 0; p < parts.length; p++) {
+              if (parts[p] === oldName) { parts[p] = trimmed; hit = true; }
+            }
+            if (hit) {
+              tx.subCategory = parts.join(window.CAT_PATH_SEP);
+              changed = true;
+            }
+          } else if (tx.subCategory && tx.subCategory.includes(oldName)) {
+            // multi-select comma list
+            const parts = tx.subCategory.split(',').map(function(s) { return s.trim(); });
+            const idx = parts.indexOf(oldName);
+            if (idx !== -1) {
+              parts[idx] = trimmed;
+              tx.subCategory = parts.join(', ');
+              changed = true;
+            }
+          }
+          if (changed) {
+            updatedCount++;
+            if (window.SomtumStore && SomtumStore.putTx) {
+              try {
+                await SomtumStore.putTx(tx);
+                if (SomtumStore.markDirty) await SomtumStore.markDirty(tx.id);
+              } catch (e) { console.warn('putTx after renameSubPath', e); }
+            }
+          }
+        }
+        window.syncDataToCloud(true);
+        window.renderCategoryTree();
+        window.refreshDashboard();
+        window.showToast(updatedCount > 0
+          ? 'แก้ไขรายการย่อยเรียบร้อย (อัปเดต ' + updatedCount + ' รายการ)'
+          : 'แก้ไขรายการย่อยเรียบร้อย');
+      });
+    };
+
+    window.deleteSubCategoryPath = function(pathStr) {
+      const resolved = window.resolveCatPath(pathStr);
+      if (!resolved || resolved.node == null) return;
+      const subName = window.catNodeName(resolved.node);
+      window.showConfirmModal('ยืนยันการลบรายการย่อย', 'ต้องการลบ "' + subName + '" และรายการซ้อนภายใต้ (ถ้ามี) ใช่หรือไม่?', function() {
+        resolved.parentArr.splice(resolved.index, 1);
+        window.syncDataToCloud(true);
+        window.renderCategoryTree();
+        window.showToast('ลบรายการย่อยแล้ว');
+      });
+    };
 
     // Rename main category + update all related transactions (via modal)
     window.renameMainCategory = function(i) {
@@ -1963,32 +2335,30 @@
     }
 
     window.addSubCategory = function(i) {
-      const input = document.getElementById(`newSub-${i}`);
-      const val = input.value.trim();
-      if(!val) return;
+      const input = document.getElementById('newSub-' + i);
+      const val = input ? input.value.trim() : '';
+      if (!val) return;
 
       const cat = window.appData.categories[managerType][i];
-      if(!cat.subs) cat.subs = [];
-      if(cat.subs.includes(val)) {
+      if (!cat.subs) cat.subs = [];
+      const exists = cat.subs.some(function(s) {
+        return window.catNodeName(s).toLowerCase() === val.toLowerCase();
+      });
+      if (exists) {
         alert('มีรายการย่อยนี้อยู่แล้ว');
         return;
       }
 
       cat.subs.push(val);
-      input.value = '';
+      if (input) input.value = '';
       window.syncDataToCloud(true);
       window.renderCategoryTree();
       window.showToast('เพิ่มรายการย่อยแล้ว');
     }
 
     window.deleteSubCategory = function(i, j) {
-      const subName = window.appData.categories[managerType][i]?.subs?.[j] || 'รายการนี้';
-      window.showConfirmModal("ยืนยันการลบรายการย่อย", `ต้องการลบ "${subName}" ใช่หรือไม่?`, () => {
-        window.appData.categories[managerType][i].subs.splice(j, 1);
-        window.syncDataToCloud(true);
-        window.renderCategoryTree();
-        window.showToast('ลบรายการย่อยแล้ว');
-      });
+      // Legacy entry → delegate to path-based delete
+      window.deleteSubCategoryPath(String(i) + ',' + String(j));
     }
 
     window.renderMaterialTags = function() {
