@@ -1,5 +1,5 @@
 /* STone Service Worker - network-first for app files (auth-safe) */
-const CACHE_NAME = 'stone-v20260805033321';
+const CACHE_NAME = 'stone-v20260805045728';
 const CORE_ASSETS = [
   './',
   './index.html',
