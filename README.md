@@ -85,3 +85,21 @@ node tests/storage-logic.test.js
 - Key ภายในยังใช้ prefix `somtum*` เพื่อไม่ให้ข้อมูลเดิมหาย
 - Service Worker ใช้ network-first สำหรับ HTML/JS เพื่อให้ hotfix auth/login ขึ้นทันที
 - ไม่ cache traffic ของ Google/Firebase auth
+
+
+## ความปลอดภัย & สโตร์
+
+- `firestore.rules` — deploy ด้วย Firebase CLI (ดู SECURITY.md)
+- `privacy.html` — นโยบายความเป็นส่วนตัว
+- `manifest.webmanifest` — PWA / TWA แบบไฟล์คงที่
+- `js/reports.js` — มอดูลรายงาน (PDF, สรุปรายเดือน, ใบสรุปประจำวัน)
+
+### ทดสอบ
+
+```bash
+node tests/calc.test.js
+node tests/storage-logic.test.js
+node tests/e2e-flow.test.js
+```
+
+หมายเหตุ: key ข้อมูลในเครื่องยังใช้ prefix `somtum*` เพื่อไม่ให้ข้อมูลเก่าหาย ชื่อที่แสดงและมอดูลผู้ดูแลใช้ **STone**

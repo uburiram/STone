@@ -1,10 +1,13 @@
 /* STone Service Worker - network-first for app files (auth-safe) */
-const CACHE_NAME = 'somtum-v20260805025905';
+const CACHE_NAME = 'stone-v20260805033321';
 const CORE_ASSETS = [
   './',
   './index.html',
+  './manifest.webmanifest',
+  './privacy.html',
   './js/storage.js',
   './js/app.js',
+  './js/reports.js',
   './js/firebase.js',
   'https://cdn.tailwindcss.com',
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
