@@ -2770,6 +2770,128 @@
     window.updateNetworkStatusUI();
     if (typeof window.updatePendingSyncButton === 'function') window.updatePendingSyncButton();
 
+
+    // ----- PWA install prompt (browser only; skip if already installed) -----
+    window._deferredPwaPrompt = null;
+    window.isRunningAsInstalledPwa = function() {
+      try {
+        if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
+        if (window.matchMedia && window.matchMedia('(display-mode: fullscreen)').matches) return true;
+        if (typeof navigator !== 'undefined' && navigator.standalone === true) return true; // iOS Safari
+      } catch (e) { /* ignore */ }
+      return false;
+    };
+    window.dismissPwaInstallPrompt = function(days) {
+      days = days || 14;
+      try {
+        localStorage.setItem('stonePwaInstallDismissedAt', String(Date.now()));
+        localStorage.setItem('stonePwaInstallDismissDays', String(days));
+      } catch (e) { /* ignore */ }
+      const modal = document.getElementById('pwaInstallModal');
+      if (modal) modal.classList.add('hidden');
+    };
+    window.shouldShowPwaInstallPrompt = function() {
+      if (window.isRunningAsInstalledPwa()) return false;
+      try {
+        const at = parseInt(localStorage.getItem('stonePwaInstallDismissedAt') || '0', 10);
+        const days = parseInt(localStorage.getItem('stonePwaInstallDismissDays') || '14', 10);
+        if (at && Date.now() - at < days * 24 * 60 * 60 * 1000) return false;
+      } catch (e) { /* ignore */ }
+      return true;
+    };
+    window.showPwaInstallPrompt = function() {
+      if (!window.shouldShowPwaInstallPrompt()) return;
+      const modal = document.getElementById('pwaInstallModal');
+      if (!modal) return;
+      const hint = document.getElementById('pwaInstallHint');
+      const okBtn = document.getElementById('pwaInstallOk');
+      // Android/Chrome: native beforeinstallprompt available
+      if (window._deferredPwaPrompt && okBtn) {
+        okBtn.textContent = 'ติดตั้ง';
+        if (hint) hint.classList.add('hidden');
+      } else {
+        // iOS / browsers without beforeinstallprompt — show manual steps
+        if (okBtn) okBtn.textContent = 'วิธีติดตั้ง';
+        if (hint) {
+          const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent || '');
+          hint.textContent = isIOS
+            ? 'บน iPhone/iPad: แตะปุ่มแชร์ □↑ แล้วเลือก "เพิ่มไปยังหน้าจอโฮม"'
+            : 'ใช้เมนูของเบราว์เซอร์ → "ติดตั้งแอป" หรือ "Add to Home screen"';
+          hint.classList.remove('hidden');
+        }
+      }
+      modal.classList.remove('hidden');
+    };
+    window.initPwaInstallPrompt = function() {
+      if (window.isRunningAsInstalledPwa()) return;
+
+      window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        window._deferredPwaPrompt = e;
+      });
+
+      window.addEventListener('appinstalled', function() {
+        window._deferredPwaPrompt = null;
+        window.dismissPwaInstallPrompt(365);
+        if (typeof window.showToast === 'function') {
+          window.showToast('ติดตั้ง STone เรียบร้อยแล้ว', 'success');
+        }
+      });
+
+      const dismissBtn = document.getElementById('pwaInstallDismiss');
+      const okBtn = document.getElementById('pwaInstallOk');
+      if (dismissBtn) {
+        dismissBtn.addEventListener('click', function() {
+          window.dismissPwaInstallPrompt(14);
+        });
+      }
+      if (okBtn) {
+        okBtn.addEventListener('click', async function() {
+          if (window._deferredPwaPrompt) {
+            try {
+              window._deferredPwaPrompt.prompt();
+              const choice = await window._deferredPwaPrompt.userChoice;
+              window._deferredPwaPrompt = null;
+              if (choice && choice.outcome === 'accepted') {
+                window.dismissPwaInstallPrompt(365);
+              } else {
+                window.dismissPwaInstallPrompt(7);
+              }
+            } catch (err) {
+              console.warn('[STone] install prompt', err);
+              window.dismissPwaInstallPrompt(7);
+            }
+            const modal = document.getElementById('pwaInstallModal');
+            if (modal) modal.classList.add('hidden');
+          } else {
+            // Manual instructions already visible — just close after user reads
+            const hint = document.getElementById('pwaInstallHint');
+            if (hint && hint.classList.contains('hidden')) {
+              window.showPwaInstallPrompt();
+            } else {
+              window.dismissPwaInstallPrompt(7);
+            }
+          }
+        });
+      }
+
+      // Show after UI settles (only browser, not installed app)
+      setTimeout(function() {
+        if (window.shouldShowPwaInstallPrompt()) {
+          window.showPwaInstallPrompt();
+        }
+      }, 5000);
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function() {
+        window.initPwaInstallPrompt();
+      });
+    } else {
+      window.initPwaInstallPrompt();
+    }
+
+
     // ----- Register Service Worker -----
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
