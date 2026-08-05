@@ -21,22 +21,12 @@
     };
 
     window.escapeHTML = function(str) {
-      if (typeof str !== 'string') return str;
-      return str.replace(/[&<>'"]/g, tag => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-      }[tag]));
+      if (str == null) return '';
+      if (typeof str !== 'string') str = String(str);
+      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     };
-
-    /** Escape for single-quoted HTML attribute / inline JS string contexts */
     window.escapeAttr = function(str) {
-      return String(str == null ? '' : str)
-        .replace(/\\/g, '\\\\')
-        .replace(/'/g, "\\'")
-        .replace(/"/g, '&quot;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/\n/g, ' ')
-        .replace(/\r/g, '');
+      return window.escapeHTML(str);
     };
 
     /**
@@ -833,7 +823,7 @@
       (window.appData.categories?.expense || []).forEach(c => names.add(c.name));
       (window.appData.transactions || []).forEach(t => { if (t.category) names.add(t.category); });
       sel.innerHTML = '<option value="all">ทุกหมวดหมู่</option>' +
-        [...names].sort().map(n => `<option value="${escapeHTML(n)}">${escapeHTML(n)}</option>`).join('');
+        [...names].sort().map(n => `<option value="${escapeAttr(String(n))}">${escapeHTML(String(n))}</option>`).join('');
       if ([...names].includes(prev) || prev === 'all') sel.value = prev;
     };
 
@@ -1239,8 +1229,8 @@
           const checked = existingItems.includes(item) ? 'checked' : '';
           chkList.innerHTML += `
             <label class="flex items-center space-x-2 bg-white p-2 rounded-xl border border-gray-100 shadow-sm cursor-pointer hover:border-brand-300">
-              <input type="checkbox" name="matCheck" value="${escapeHTML(item)}" class="text-brand-500 focus:ring-brand-500 rounded" ${checked}>
-              <span class="text-[11px] text-gray-700 font-medium">${escapeHTML(item)}</span>
+              <input type="checkbox" name="matCheck" value="${escapeAttr(String(item))}" class="text-brand-500 focus:ring-brand-500 rounded" ${checked}>
+              <span class="text-[11px] text-gray-700 font-medium">${escapeHTML(String(item))}</span>
             </label>`;
         });
         return;
@@ -1986,7 +1976,7 @@
       document.getElementById('calDayInc').innerText = '฿' + inc.toLocaleString('th-TH', {minimumFractionDigits: 2});
       document.getElementById('calDayExp').innerText = '฿' + exp.toLocaleString('th-TH', {minimumFractionDigits: 2});
       document.getElementById('calDayNet').innerText = '฿' + net.toLocaleString('th-TH', {minimumFractionDigits: 2});
-      document.getElementById('calModalTitle').innerHTML = `<i class="fa-solid fa-calendar-day"></i> รายการวันที่ ${dStr}`;
+      document.getElementById('calModalTitle').innerHTML = `<i class="fa-solid fa-calendar-day"></i> รายการวันที่ ${escapeHTML(String(dStr || ''))}`;
       
       window.renderDrillDownAccordion(txs, 'calDayTxList', 'calDayModal');
       document.getElementById('calendarDayModal').classList.remove('hidden');

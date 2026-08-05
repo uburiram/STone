@@ -342,7 +342,7 @@
     </div>
     <div class="ds-body" id="dailySlipPrintArea">
       <div class="ds-brand">สรุปยอดประจำวัน</div>
-      <div class="ds-date">${dateLabel}</div>
+      <div class="ds-date">${(typeof escapeHTML==='function'?escapeHTML(String(dateLabel)):String(dateLabel))}</div>
       <div class="ds-card ds-inc">
         <div class="ds-label">รายรับ</div>
         <div class="ds-amt">฿${fmt(inc)}</div>
