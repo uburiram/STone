@@ -2845,19 +2845,25 @@
 
       const sumMonth = (year, month) => {
         let inc = 0, exp = 0, count = 0;
-        const catMap = {};
+        const incCatMap = {};
+        const expCatMap = {};
         (window.appData.transactions || []).forEach(tx => {
           const d = parseLocalDate(tx.date);
           if (!d || d.getFullYear() !== year || d.getMonth() !== month) return;
           const amt = Number(tx.amount) || 0;
           count++;
-          if (tx.type === 'income') inc += amt;
-          else exp += amt;
-          const key = (tx.type === 'income' ? 'รับ: ' : 'จ่าย: ') + (tx.category || 'ไม่ระบุ');
-          catMap[key] = (catMap[key] || 0) + amt;
+          const catName = tx.category || 'ไม่ระบุ';
+          if (tx.type === 'income') {
+            inc += amt;
+            incCatMap[catName] = (incCatMap[catName] || 0) + amt;
+          } else {
+            exp += amt;
+            expCatMap[catName] = (expCatMap[catName] || 0) + amt;
+          }
         });
-        const topCats = Object.entries(catMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
-        return { inc, exp, net: inc - exp, topCats, count };
+        const topIncCats = Object.entries(incCatMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
+        const topExpCats = Object.entries(expCatMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
+        return { inc, exp, net: inc - exp, topIncCats, topExpCats, count };
       };
 
       const cur = sumMonth(y, m);
@@ -2895,14 +2901,27 @@
             ${margin !== null ? `<div class="text-[9px] font-semibold mt-0.5 ${margin >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${margin.toFixed(1)}% ของรายรับ</div>` : ''}
           </div>
         </div>
-        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-xl px-3 py-2 flex-1 min-h-0 overflow-hidden flex flex-col">
-          <div class="text-xs font-bold text-gray-800 dark:text-gray-100 mb-1.5 shrink-0">หมวดที่ใช้เยอะสุด</div>
-          <div class="flex-1 min-h-0 overflow-hidden">
-            ${cur.topCats.length ? cur.topCats.map(([name, val], i) => `
-              <div class="flex justify-between items-center py-1 border-b border-gray-200/80 dark:border-gray-600 last:border-0 gap-2">
+        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-xl px-3 py-2 flex-1 min-h-0 overflow-y-auto flex flex-col gap-2">
+          <div class="text-xs font-bold text-gray-800 dark:text-gray-100 shrink-0">หมวดที่ใช้เยอะสุด</div>
+          <div class="shrink-0">
+            <div class="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 mb-1 flex items-center gap-1">
+              <i class="fa-solid fa-arrow-trend-up text-[10px]"></i> รายรับ
+            </div>
+            ${cur.topIncCats.length ? cur.topIncCats.map(([name, val], i) => `
+              <div class="flex justify-between items-center py-1 border-b border-emerald-100/80 dark:border-emerald-900/40 last:border-0 gap-2">
                 <span class="text-xs text-gray-700 dark:text-gray-200 truncate">${i + 1}. ${escapeHTML(name)}</span>
-                <span class="text-xs font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">฿${val.toLocaleString('th-TH', {minimumFractionDigits: 0})}</span>
-              </div>`).join('') : '<div class="text-xs text-gray-400 py-1">ยังไม่มีข้อมูลในเดือนนี้</div>'}
+                <span class="text-xs font-bold text-emerald-700 dark:text-emerald-300 whitespace-nowrap">฿${val.toLocaleString('th-TH', {minimumFractionDigits: 0})}</span>
+              </div>`).join('') : '<div class="text-xs text-gray-400 py-1">ยังไม่มีรายรับในเดือนนี้</div>'}
+          </div>
+          <div class="shrink-0">
+            <div class="text-[11px] font-bold text-rose-700 dark:text-rose-300 mb-1 flex items-center gap-1">
+              <i class="fa-solid fa-arrow-trend-down text-[10px]"></i> รายจ่าย
+            </div>
+            ${cur.topExpCats.length ? cur.topExpCats.map(([name, val], i) => `
+              <div class="flex justify-between items-center py-1 border-b border-rose-100/80 dark:border-rose-900/40 last:border-0 gap-2">
+                <span class="text-xs text-gray-700 dark:text-gray-200 truncate">${i + 1}. ${escapeHTML(name)}</span>
+                <span class="text-xs font-bold text-rose-700 dark:text-rose-300 whitespace-nowrap">฿${val.toLocaleString('th-TH', {minimumFractionDigits: 0})}</span>
+              </div>`).join('') : '<div class="text-xs text-gray-400 py-1">ยังไม่มีรายจ่ายในเดือนนี้</div>'}
           </div>
         </div>
         <div class="bg-gray-50 dark:bg-gray-700/40 rounded-xl px-3 py-2 text-xs text-gray-700 dark:text-gray-200 shrink-0">
@@ -2965,7 +2984,7 @@
 <div class="ds-backdrop">
   <div class="ds-sheet">
     <div class="ds-header">
-      <div class="ds-title">ใบสรุปยอดรายวัน</div>
+      <div class="ds-title">พิมพ์ใบสรุปยอดประจำวัน</div>
       <button type="button" class="ds-close" aria-label="ปิด">&times;</button>
     </div>
     <div class="ds-date-bar no-print">
@@ -2973,7 +2992,7 @@
       <input type="date" id="dailySlipDateInput" value="${day}" class="ds-date-input">
     </div>
     <div class="ds-body" id="dailySlipPrintArea">
-      <div class="ds-brand">STone</div>
+      <div class="ds-brand">สรุปยอดประจำวัน</div>
       <div class="ds-date">${dateLabel}</div>
       <div class="ds-card ds-inc">
         <div class="ds-label">รายรับ</div>
