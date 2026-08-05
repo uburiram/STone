@@ -5,7 +5,7 @@
   <!-- Content-Security-Policy (basic hardening; allows required CDNs + inline handlers) -->
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
-    script-src 'self' 'unsafe-inline' 'unsafe-eval'
+    script-src 'self' 'unsafe-inline'
       https://cdn.tailwindcss.com
       https://cdnjs.cloudflare.com
       https://www.gstatic.com
@@ -44,12 +44,12 @@
     form-action 'self';
   ">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ส้มตำนายหนึ่ง - ระบบบันทึกรายรับ รายจ่าย</title>
+  <title>ระบบบันทึกต้นทุน กำไร - STone</title>
   
   <!-- Icon & PWA Links -->
   <link id="manifest-placeholder" rel="manifest">
-  <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png">
-  <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png">
+  <link rel="icon" type="image/png" href="./favicon-32.png">
+  <link rel="apple-touch-icon" href="./apple-touch-icon-180.png">
   
   <!-- External Resources -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -110,9 +110,9 @@
 
   <!-- Loading Overlay -->
   <div id="loadingOverlay" class="fixed inset-0 bg-white/90 dark:bg-gray-900/90 z-[100] flex flex-col items-center justify-center transition-opacity duration-300">
-    <img src="https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png" class="w-16 h-16 animate-bounce mb-3 rounded-2xl shadow-md" alt="Somtum Logo">
+    <img src="./icon-192.png" class="w-16 h-16 animate-bounce mb-3 rounded-2xl shadow-md" alt="STone Logo">
     <i class="fa-solid fa-circle-notch fa-spin text-3xl text-brand-500 mb-2"></i>
-    <p class="text-gray-700 dark:text-gray-200 font-bold text-xs">กำลังโหลดข้อมูล ส้มตำนายหนึ่ง...</p>
+    <p class="text-gray-700 dark:text-gray-200 font-bold text-xs">กำลังโหลดข้อมูล ระบบบันทึกต้นทุน กำไร - STone...</p>
   </div>
 
   <!-- Unsynced status bar (full width) -->
@@ -131,7 +131,7 @@
     <div id="userProfileCard" class="bg-white dark:bg-gray-800 p-3.5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col sm:flex-row justify-between items-center gap-3">
       <div id="userInfoSection" class="flex items-center gap-3 w-full sm:w-auto">
         <div class="relative">
-          <img id="userAvatar" src="https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png" alt="Profile" class="w-11 h-11 rounded-full object-cover border-2 border-brand-500">
+          <img id="userAvatar" src="./icon-192.png" alt="Profile" class="w-11 h-11 rounded-full object-cover border-2 border-brand-500">
           <span id="syncStatusBadge" class="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-gray-400 border-2 border-white dark:border-gray-800 rounded-full" title="ไม่ได้เข้าสู่ระบบ"></span>
         </div>
         <div>
@@ -440,14 +440,20 @@
   </div>
 
   <!-- Monthly Report Modal -->
-  <div id="monthlyReportModal" class="fixed inset-0 bg-black/50 z-[70] flex items-end sm:items-center justify-center hidden p-0 sm:p-4">
-    <div class="bg-white dark:bg-gray-800 w-full max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[92vh] flex flex-col overflow-hidden shadow-xl">
-      <div class="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
-        <h3 class="font-bold text-sm text-gray-800 dark:text-gray-100"><i class="fa-solid fa-calendar-check text-brand-500 mr-1.5"></i>สรุปรายเดือน</h3>
-        <button onclick="document.getElementById('monthlyReportModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-lg font-bold px-2">&times;</button>
+  <div id="monthlyReportModal" class="fixed inset-0 bg-black/50 z-[70] flex items-stretch sm:items-center justify-center hidden p-0 sm:p-3">
+    <div class="bg-white dark:bg-gray-800 w-full sm:max-w-lg h-[100dvh] sm:h-auto sm:max-h-[96dvh] sm:rounded-3xl flex flex-col overflow-hidden shadow-xl">
+      <div class="px-3 pt-3 pb-2 border-b border-gray-100 dark:border-gray-700 shrink-0">
+        <div class="flex justify-between items-center mb-2">
+          <h3 class="font-bold text-sm text-gray-800 dark:text-gray-100"><i class="fa-solid fa-calendar-check text-brand-500 mr-1.5"></i>สรุปรายเดือน</h3>
+          <button onclick="document.getElementById('monthlyReportModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-xl font-bold px-2 leading-none">&times;</button>
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-[11px] font-semibold text-gray-600 dark:text-gray-300 whitespace-nowrap">เลือกเดือน</label>
+          <input type="month" id="monthlyReportMonth" onchange="renderMonthlyReport()" class="flex-1 text-xs border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500">
+        </div>
       </div>
-      <div class="p-4 overflow-y-auto flex-1 space-y-3 text-xs" id="monthlyReportBody">
-        <!-- filled by JS -->
+      <div class="px-3 py-2 flex-1 min-h-0 overflow-hidden flex flex-col gap-2 text-sm" id="monthlyReportBody">
+        <!-- filled by JS — layout กะทัดรัดพอดีจอ -->
       </div>
     </div>
   </div>
@@ -459,7 +465,7 @@
         <i class="fa-solid fa-hard-drive"></i>
       </div>
       <div>
-        <h3 class="font-bold text-base text-gray-800 dark:text-gray-100">ถึงเวลสำรองข้อมูลประจำสัปดาห์</h3>
+        <h3 class="font-bold text-base text-gray-800 dark:text-gray-100">ถึงเวลาสำรองข้อมูลประจำสัปดาห์</h3>
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">แนะนำให้ Export ไฟล์ JSON เก็บไว้นอกเครื่อง กันข้อมูลหายเมื่อเครื่องพังหรือถูกล้าง</p>
       </div>
       <div class="flex flex-col gap-2 pt-1">
@@ -570,12 +576,19 @@
         </div>
 
         <div id="subCatContainer" class="hidden">
-          <label id="subCatLabel" class="block font-medium text-gray-700 mb-1">รายการย่อย *</label>
-          <select id="txSubCategory" class="w-full border border-gray-300 rounded-xl px-3 py-2 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500"></select>
+          <label id="subCatLabel" class="block font-medium text-gray-700 mb-1">รายการย่อย / หมวดซ้อน (สูงสุด 5 ชั้น)</label>
+          <select id="txSubCategory" class="hidden"></select>
+          <div id="nestedSubLevels" class="space-y-1"></div>
         </div>
 
         <div id="multiMaterialContainer" class="hidden border border-amber-200 bg-amber-50/50 rounded-2xl p-3">
-          <label id="checklistLabel" class="block font-semibold text-amber-900 mb-1.5"><i class="fa-solid fa-basket-shopping text-brand-500 mr-1"></i> เลือกรายการ:</label>
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+            <label id="checklistLabel" class="block font-semibold text-amber-900"><i class="fa-solid fa-basket-shopping text-brand-500 mr-1"></i> เลือกรายการ:</label>
+            <div class="flex gap-1.5">
+              <button type="button" onclick="toggleAllMaterials(true)" class="text-[10px] font-semibold px-2 py-1 rounded-lg bg-brand-600 text-white hover:bg-brand-700 shadow-sm">เลือกทั้งหมด</button>
+              <button type="button" onclick="toggleAllMaterials(false)" class="text-[10px] font-semibold px-2 py-1 rounded-lg bg-white border border-gray-300 text-gray-600 hover:bg-gray-50">ยกเลิกทั้งหมด</button>
+            </div>
+          </div>
           <div id="materialsChecklist" class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-36 overflow-y-auto p-1"></div>
         </div>
 
@@ -665,14 +678,29 @@
         <h3 class="font-bold text-sm text-gray-800 dark:text-gray-100"><i class="fa-solid fa-bullseye text-brand-500"></i> ตั้งเป้าหมาย & คำนวณ</h3>
         <button onclick="document.getElementById('goalDetailModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 font-bold text-lg">&times;</button>
       </div>
-      <div class="text-xs space-y-2.5 text-gray-600 dark:text-gray-300">
-        <p>เป้าหมายตั้งต้นจะคำนวณจาก (รายจ่ายรวม + 60%) อัตโนมัติ แต่คุณสามารถกำหนดเป้าหมายเองได้</p>
+      <div class="text-xs space-y-3 text-gray-600 dark:text-gray-300">
+        <p class="leading-relaxed">เลือกตั้งเป้าเป็น <b>เปอร์เซ็นต์มาร์กอัปบนรายจ่าย</b> หรือเป็น <b>จำนวนเงิน</b> (ระบบจะบอกว่าจำนวนนั้นคิดเป็นกี่ % ของรายจ่าย)</p>
         <div class="flex gap-2">
-          <input type="number" id="customGoalInput" placeholder="ตั้งเป้าหมายเอง (เช่น 5000)" class="flex-1 border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-2 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none">
-          <button onclick="saveCustomGoal()" class="bg-brand-600 text-white px-3 py-2 rounded-xl">บันทึก</button>
-          <button onclick="clearCustomGoal()" class="bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-100 px-3 py-2 rounded-xl">ใช้สูตร</button>
+          <button type="button" id="goalModeBtnPercent" onclick="setGoalModeUI('percent')" class="flex-1 py-2 rounded-xl text-xs font-bold bg-brand-600 text-white">เป็น %</button>
+          <button type="button" id="goalModeBtnAmount" onclick="setGoalModeUI('amount')" class="flex-1 py-2 rounded-xl text-xs font-semibold bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">เป็นจำนวนเงิน</button>
         </div>
-        <div id="goalCalculationBreakdown" class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-600 space-y-1 mt-3"></div>
+        <div id="goalModePercentBox" class="space-y-2">
+          <label class="text-[11px] font-semibold text-gray-700 dark:text-gray-200">เปอร์เซ็นต์มาร์กอัปบนรายจ่าย</label>
+          <div class="flex gap-2 items-center">
+            <input type="number" id="customGoalPercentInput" min="0" step="1" placeholder="เช่น 60" oninput="updateGoalPreview()" class="flex-1 border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-2.5 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none text-sm">
+            <span class="text-sm font-bold text-gray-500">%</span>
+          </div>
+          <p class="text-[10px] text-gray-400">ตัวอย่าง: 60% = เป้าหมายรายรับเป็นรายจ่าย × 1.6</p>
+        </div>
+        <div id="goalModeAmountBox" class="space-y-2 hidden">
+          <label class="text-[11px] font-semibold text-gray-700 dark:text-gray-200">เป้าหมายเป็นจำนวนเงิน (บาท)</label>
+          <input type="number" id="customGoalInput" min="0" step="0.01" placeholder="เช่น 50000" oninput="updateGoalPreview()" class="w-full border border-gray-300 dark:border-gray-600 rounded-xl px-3 py-2.5 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none text-sm">
+        </div>
+        <div id="goalCalculationBreakdown" class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-600 space-y-1 text-[12px] leading-relaxed"></div>
+        <div class="flex gap-2 pt-1">
+          <button onclick="saveCustomGoal()" class="flex-1 bg-brand-600 text-white py-2.5 rounded-xl font-bold text-xs">บันทึกเป้าหมาย</button>
+          <button onclick="clearCustomGoal()" class="px-3 py-2.5 rounded-xl bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-100 text-xs font-semibold">ใช้สูตร +60%</button>
+        </div>
       </div>
     </div>
   </div>

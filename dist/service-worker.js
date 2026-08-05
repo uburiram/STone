@@ -1,5 +1,5 @@
-/* Somtum Service Worker - network-first for app files (auth-safe) */
-const CACHE_NAME = 'somtum-v14';
+/* STone Service Worker - network-first for app files (auth-safe) */
+const CACHE_NAME = 'somtum-v20260805010047';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -12,7 +12,13 @@ const CORE_ASSETS = [
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js',
   'https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/sarabun/Sarabun-Regular.ttf',
-  'https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png'
+  './icon-192.png',
+  './icon-512.png',
+  './favicon-32.png',
+  './apple-touch-icon-180.png',
+  './icon-maskable-192.png',
+  './icon-maskable-512.png',
+  './icon_256x256.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -72,7 +78,16 @@ self.addEventListener('fetch', (event) => {
           }
           return res;
         })
-        .catch(() => caches.match(req).then((c) => c || caches.match('./index.html')))
+        .catch(() =>
+          caches.match(req).then((c) => {
+            if (c) return c;
+            // Only fall back to index.html for real navigations — never for JS/CSS
+            if (req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) {
+              return caches.match('./index.html');
+            }
+            return undefined; // let browser show network error for missing JS
+          })
+        )
     );
     return;
   }
