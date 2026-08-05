@@ -845,32 +845,47 @@
         return;
       }
 
-      const grouped = {};
-      txList.forEach(tx => {
-        const cat = tx.category || 'ไม่ระบุหมวดหมู่';
-        const sub = tx.subCategory || 'ทั่วไป';
-        if (!grouped[cat]) grouped[cat] = { total: 0, subs: {} };
-        grouped[cat].total = window.roundMoney(grouped[cat].total + window.roundMoney(tx.amount));
+      /** Group one type's transactions by category → subCategory */
+      function buildTypeGroup(list) {
+        const grouped = {};
+        (list || []).forEach(function(tx) {
+          const cat = tx.category || 'ไม่ระบุหมวดหมู่';
+          const sub = tx.subCategory || 'ทั่วไป';
+          if (!grouped[cat]) grouped[cat] = { total: 0, subs: {} };
+          grouped[cat].total = window.roundMoney(grouped[cat].total + window.roundMoney(tx.amount));
+          if (!grouped[cat].subs[sub]) grouped[cat].subs[sub] = { total: 0, items: [] };
+          grouped[cat].subs[sub].total = window.roundMoney(grouped[cat].subs[sub].total + window.roundMoney(tx.amount));
+          grouped[cat].subs[sub].items.push(tx);
+        });
+        return grouped;
+      }
 
-        if (!grouped[cat].subs[sub]) grouped[cat].subs[sub] = { total: 0, items: [] };
-        grouped[cat].subs[sub].total = window.roundMoney(grouped[cat].subs[sub].total + window.roundMoney(tx.amount));
-        grouped[cat].subs[sub].items.push(tx);
-      });
-
-      let html = '';
-      Object.keys(grouped).forEach((catName, catIdx) => {
-        const catData = grouped[catName];
-        const catId = `${prefix}-cat-${catIdx}`;
-        let subHtml = '';
-
-        Object.keys(catData.subs).forEach((subName, subIdx) => {
-          const subData = catData.subs[subName];
-          const subId = `${prefix}-sub-${catIdx}-${subIdx}`;
-          
-          const itemsHtml = subData.items.map(it => {
-            const isInc = it.type === 'income';
-            const safeId = window.escapeAttr(it.id);
-            return `
+      function renderTypeSection(typeKey, typeLabel, typeColorClass, grouped, sectionIdx) {
+        const catNames = Object.keys(grouped);
+        if (catNames.length === 0) return '';
+        let typeTotal = 0;
+        catNames.forEach(function(c) { typeTotal = window.roundMoney(typeTotal + grouped[c].total); });
+        let html = `
+          <div class="mb-3">
+            <div class="flex justify-between items-center px-1 mb-1.5">
+              <span class="text-xs font-bold ${typeColorClass} flex items-center gap-1.5">
+                <i class="fa-solid ${typeKey === 'income' ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down'} text-[10px]"></i>
+                ${typeLabel}
+              </span>
+              <span class="text-xs font-bold ${typeColorClass}">฿${typeTotal.toLocaleString('th-TH', {minimumFractionDigits: 2})}</span>
+            </div>
+        `;
+        catNames.forEach(function(catName, catIdx) {
+          const catData = grouped[catName];
+          const catId = prefix + '-' + typeKey + '-cat-' + sectionIdx + '-' + catIdx;
+          let subHtml = '';
+          Object.keys(catData.subs).forEach(function(subName, subIdx) {
+            const subData = catData.subs[subName];
+            const subId = prefix + '-' + typeKey + '-sub-' + sectionIdx + '-' + catIdx + '-' + subIdx;
+            const itemsHtml = subData.items.map(function(it) {
+              const isInc = it.type === 'income';
+              const safeId = window.escapeAttr(it.id);
+              return `
               <div class="flex justify-between items-center py-1.5 px-2.5 text-xs bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 my-1 shadow-2xs cursor-pointer hover:border-brand-300 transition-all" onclick="editTransaction('${safeId}')" title="แตะเพื่อแก้ไข">
                 <div class="flex flex-col">
                   <span class="font-medium text-gray-800 dark:text-gray-100 text-[11px]">${escapeHTML(it.date)} ${it.time ? '• ' + escapeHTML(it.time) : ''}</span>
@@ -887,32 +902,32 @@
                   </div>
                 </div>
               </div>`;
-          }).join('');
+            }).join('');
 
-          subHtml += `
-            <div class="bg-gray-50/80 rounded-xl p-2 border border-gray-100 my-1.5">
-              <div class="flex justify-between items-center text-xs font-semibold text-gray-700 cursor-pointer py-0.5" onclick="toggleSubDetail('${subId}')">
-                <span class="flex items-center gap-1.5 text-gray-700">
+            subHtml += `
+            <div class="bg-gray-50/80 dark:bg-gray-900/40 rounded-xl p-2 border border-gray-100 dark:border-gray-700 my-1.5">
+              <div class="flex justify-between items-center text-xs font-semibold text-gray-700 dark:text-gray-200 cursor-pointer py-0.5" onclick="toggleSubDetail('${subId}')">
+                <span class="flex items-center gap-1.5">
                   <i class="fa-solid fa-angle-right text-gray-400 text-[10px] transition-transform" id="icon-${subId}"></i>
                   <span>${escapeHTML(subName)}</span>
-                  <span class="text-[9px] bg-gray-200 text-gray-600 px-1.5 py-0.2 rounded-full font-normal">${subData.items.length}</span>
+                  <span class="text-[9px] bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-200 px-1.5 py-0.2 rounded-full font-normal">${subData.items.length}</span>
                 </span>
-                <span class="font-bold text-gray-700">฿${subData.total.toLocaleString('th-TH', {minimumFractionDigits: 2})}</span>
+                <span class="font-bold text-gray-700 dark:text-gray-200">฿${subData.total.toLocaleString('th-TH', {minimumFractionDigits: 2})}</span>
               </div>
-              <div id="${subId}" class="hidden mt-1.5 pt-1 border-t border-gray-200/60 space-y-1">
+              <div id="${subId}" class="hidden mt-1.5 pt-1 border-t border-gray-200/60 dark:border-gray-600 space-y-1">
                 ${itemsHtml}
               </div>
             </div>`;
-        });
+          });
 
-        html += `
-          <div class="bg-white rounded-2xl border border-gray-200 shadow-2xs p-3 my-2">
+          html += `
+          <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xs p-3 my-2">
             <div class="flex justify-between items-center cursor-pointer" onclick="toggleSubDetail('${catId}')">
-              <span class="font-bold text-xs text-gray-800 flex items-center gap-2">
+              <span class="font-bold text-xs text-gray-800 dark:text-gray-100 flex items-center gap-2">
                 <i class="fa-solid fa-folder text-brand-500"></i>
                 <span>${escapeHTML(catName)}</span>
               </span>
-              <span class="font-bold text-xs text-gray-800 flex items-center gap-1">
+              <span class="font-bold text-xs text-gray-800 dark:text-gray-100 flex items-center gap-1">
                 ฿${catData.total.toLocaleString('th-TH', {minimumFractionDigits: 2})}
                 <i class="fa-solid fa-caret-down text-gray-400 ml-1 transition-transform" id="icon-${catId}"></i>
               </span>
@@ -921,8 +936,30 @@
               ${subHtml}
             </div>
           </div>`;
+        });
+        html += '</div>';
+        return html;
+      }
+
+      const incomeList = [];
+      const expenseList = [];
+      (txList || []).forEach(function(tx) {
+        if (!tx) return;
+        if (tx.type === 'income') incomeList.push(tx);
+        else if (tx.type === 'expense') expenseList.push(tx);
       });
 
+      const incGrouped = buildTypeGroup(incomeList);
+      const expGrouped = buildTypeGroup(expenseList);
+
+      let html = '';
+      html += renderTypeSection('income', 'รายรับ', 'text-emerald-700 dark:text-emerald-300', incGrouped, 0);
+      html += renderTypeSection('expense', 'รายจ่าย', 'text-rose-700 dark:text-rose-300', expGrouped, 1);
+
+      if (!html) {
+        container.innerHTML = `<div class="text-center py-6 text-gray-400 text-xs">ไม่มีรายการข้อมูล</div>`;
+        return;
+      }
       container.innerHTML = html;
     };
 
