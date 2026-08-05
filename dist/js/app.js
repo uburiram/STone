@@ -25,6 +25,60 @@
       return str.replace(/[&<>'"]/g, tag => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
       }[tag]));
+    };
+
+    /** Escape for single-quoted HTML attribute / inline JS string contexts */
+    window.escapeAttr = function(str) {
+      return String(str == null ? '' : str)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\n/g, ' ')
+        .replace(/\r/g, '');
+    };
+
+    /**
+     * Boot gate: prevent saves / destructive writes until SomtumStore.init + first hydrate finish.
+     * Stops empty-state overwrite races on cold start / auth restore.
+     */
+    window.__storeReady = false;
+    window.__bootPromise = null;
+    window.whenStoreReady = function() {
+      if (window.__storeReady) return Promise.resolve(true);
+      return new Promise(function(resolve) {
+        if (window.__storeReady) { resolve(true); return; }
+        var done = function() { resolve(true); };
+        window.addEventListener('somtum-store-ready', done, { once: true });
+        // Safety timeout so UI never hangs forever if IDB is blocked
+        setTimeout(function() {
+          if (!window.__storeReady) {
+            console.warn('[boot] store ready timeout — allowing limited operation');
+            window.__storeReady = true;
+          }
+          resolve(true);
+        }, 8000);
+      });
+    };
+
+    /** Early stub: real implementation is assigned by firebase.js module when it loads */
+    if (typeof window.saveLocalOnly !== 'function') {
+      window.saveLocalOnly = function() {
+        try {
+          if (window.SomtumStore && typeof SomtumStore.persistAppState === 'function') {
+            SomtumStore.persistAppState(window.appData, { writeAllTx: false }).catch(function(e) {
+              console.error('persistAppState (stub)', e);
+            });
+          } else if (window.SomtumStore && typeof SomtumStore.setItem === 'function') {
+            try {
+              SomtumStore.setItem('somtumAppData', JSON.stringify(window.appData));
+            } catch (e2) { console.error(e2); }
+          }
+        } catch (e) {
+          console.error('saveLocalOnly stub failed:', e);
+        }
+      };
     }
 
     window.DEFAULT_CATEGORIES = {
@@ -47,12 +101,127 @@
     window.DEFAULT_MATERIALS = ['มะละกอ', 'พริกสด/พริกแห้ง', 'กระเทียม', 'มะนาว', 'น้ำปลา', 'ปลาร้า', 'ปูดำ/ปูม้า', 'หมูกรอบ/หมูยอ', 'เส้นขนมจีน', 'ถั่วฝักยาว', 'ผงชูรส', 'ถุงพลาสติก/กล่อง'];
     window.DEFAULT_EQUIPMENTS = ['ครก/ไม้ตีครก', 'จานชาม/ช้อนส้อม', 'โต๊ะเก้าอี้', 'เขียง/มีด'];
 
+
+    /** Max category tree depth (level 1 = main category, levels 2–5 = nested under it) */
+    window.MAX_CAT_DEPTH = 5;
+    /** Separator for nested path stored in transaction.subCategory (legacy plain strings still work) */
+    window.CAT_PATH_SEP = ' › ';
+
+    window.isCatBranch = function(node) {
+      return node && typeof node === 'object' && typeof node.name === 'string';
+    };
+    window.catNodeName = function(node) {
+      if (typeof node === 'string') return node;
+      if (window.isCatBranch(node)) return node.name;
+      return '';
+    };
+    window.catNodeChildren = function(node) {
+      if (typeof node === 'string') return [];
+      if (window.isCatBranch(node) && Array.isArray(node.children)) return node.children;
+      return [];
+    };
+    /** Recursively sanitize a subs array. Preserves legacy string leaves. Depth = nesting under main category (1..4 → total levels 2..5). */
+    window.sanitizeSubsTree = function(subs, depth) {
+      if (!Array.isArray(subs)) return [];
+      if (depth > window.MAX_CAT_DEPTH - 1) return []; // main cat is depth 0 of tree root; children start at depth 1
+      const out = [];
+      const seen = new Set();
+      for (let i = 0; i < subs.length; i++) {
+        const s = subs[i];
+        if (typeof s === 'string') {
+          const name = String(s).trim().slice(0, 200);
+          if (!name) continue;
+          const key = name.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(name);
+        } else if (window.isCatBranch(s)) {
+          const name = String(s.name).trim().slice(0, 200);
+          if (!name) continue;
+          const key = name.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const children = window.sanitizeSubsTree(s.children, depth + 1);
+          if (children.length > 0) {
+            out.push({ name: name, children: children });
+          } else {
+            // empty branch → store as plain leaf (backward-friendly)
+            out.push(name);
+          }
+        }
+      }
+      return out;
+    };
+    /** Walk tree by name path (array of names under main cat). Returns node or null. */
+    window.findCatNodeByPath = function(subs, namePath) {
+      let list = Array.isArray(subs) ? subs : [];
+      let node = null;
+      for (let d = 0; d < namePath.length; d++) {
+        const want = namePath[d];
+        node = null;
+        for (let i = 0; i < list.length; i++) {
+          if (window.catNodeName(list[i]) === want) {
+            node = list[i];
+            break;
+          }
+        }
+        if (node == null) return null;
+        list = window.catNodeChildren(node);
+      }
+      return node;
+    };
+    /** Direct children list for a path under category.subs (empty path → top-level subs). */
+    window.getChildrenAtPath = function(subs, namePath) {
+      if (!namePath || namePath.length === 0) return Array.isArray(subs) ? subs : [];
+      const node = window.findCatNodeByPath(subs, namePath);
+      return window.catNodeChildren(node);
+    };
+    /** True if this category has any selectable sub structure (tree or flat). */
+    window.categoryHasSubs = function(cat) {
+      return !!(cat && Array.isArray(cat.subs) && cat.subs.length > 0);
+    };
+    /** Collect leaf names (flat) — for legacy includes checks. */
+    window.collectLeafNames = function(subs, acc) {
+      acc = acc || [];
+      (subs || []).forEach(function(n) {
+        const kids = window.catNodeChildren(n);
+        if (kids.length === 0) acc.push(window.catNodeName(n));
+        else window.collectLeafNames(kids, acc);
+      });
+      return acc;
+    };
+
+
     window.appData = {
       transactions: [],
       categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
       materials: [...window.DEFAULT_MATERIALS],
       equipments: [...window.DEFAULT_EQUIPMENTS],
-      customGoal: null
+      customGoal: null,          // เป้าเป็นจำนวนเงิน (บาท)
+      customGoalPercent: null    // เป้าเป็น % มาร์กอัปบนรายจ่าย (60 = ×1.6)
+    };
+
+    /** คำนวณยอดเป้าหมายรายรับจากโหมดที่ตั้งไว้ */
+    window.resolveTargetGoal = function(totalExpense, totalIncome) {
+      const exp = Number(totalExpense) || 0;
+      const inc = Number(totalIncome) || 0;
+      // 1) ตั้งเป็นจำนวนเงิน
+      if (window.appData.customGoal && window.appData.customGoal > 0) {
+        return window.roundMoney(window.appData.customGoal);
+      }
+      // 2) ตั้งเป็นเปอร์เซ็นต์มาร์กอัปบนรายจ่าย (เช่น 60 → รายจ่าย × 1.6)
+      if (window.appData.customGoalPercent !== null && window.appData.customGoalPercent !== undefined) {
+        const pct = Number(window.appData.customGoalPercent);
+        if (!isNaN(pct) && pct >= 0) {
+          if (exp > 0) return window.roundMoney(exp * (1 + pct / 100));
+          if (inc > 0) return window.roundMoney(inc);
+          return 1000;
+        }
+      }
+      // 3) สูตรเริ่มต้น = มาร์กอัป 60%
+      if (exp > 0) return window.roundMoney(exp * 1.6);
+      if (inc > 0) return window.roundMoney(inc);
+      return 1000;
     };
 
     window.sanitizeAppData = function(data) {
@@ -78,7 +247,8 @@
         data.categories[type] = data.categories[type].filter(c => c && typeof c.name === 'string').map(c => {
           const cleaned = {
             name: String(c.name).slice(0, 100),
-            subs: Array.isArray(c.subs) ? c.subs.filter(s => typeof s === 'string').map(s => String(s).slice(0, 200)) : []
+            // Nested tree up to MAX_CAT_DEPTH; legacy string[] leaves preserved as-is
+            subs: window.sanitizeSubsTree(Array.isArray(c.subs) ? c.subs : [], 1)
           };
           // Firestore rejects undefined — only include flags when present
           if (c.flags && typeof c.flags === 'object') {
@@ -100,6 +270,12 @@
         data.customGoal = (!isNaN(g) && g > 0) ? g : null;
       } else {
         data.customGoal = null;
+      }
+      if (data.customGoalPercent !== null && data.customGoalPercent !== undefined) {
+        const p = Number(data.customGoalPercent);
+        data.customGoalPercent = (!isNaN(p) && p >= 0) ? p : null;
+      } else {
+        data.customGoalPercent = null;
       }
       data.transactions = data.transactions.filter(tx => {
         // Validate date format YYYY-MM-DD
@@ -208,29 +384,37 @@
 
     window.__hydrateAppDataFromStore = function(preferRicher) {
       // Sync path: try meta + optional legacy blob only for structure defaults
+      // NEVER replace a non-empty in-memory tx list with empty (race protection)
       try {
-        // Prefer structured meta when available via cached memory after init
-        // Full async hydrate happens in __hydrateAppDataFromStoreAsync
         const savedData = SomtumStore.getItem('somtumAppData');
         if (savedData) {
           const parsed = window.sanitizeAppData(JSON.parse(savedData));
-          if (preferRicher && window.appData && Array.isArray(window.appData.transactions)) {
-            const memLen = window.appData.transactions.length;
-            const diskLen = (parsed.transactions || []).length;
-            if (diskLen >= memLen) {
-              // Keep categories/settings from legacy; txs will be replaced by IDB range load
-              window.appData.categories = parsed.categories;
-              window.appData.materials = parsed.materials;
-              window.appData.equipments = parsed.equipments;
-              window.appData.customGoal = parsed.customGoal;
-              if (!window.__txCacheLoaded) window.appData.transactions = parsed.transactions;
-            }
-          } else {
+          const memLen = (window.appData && Array.isArray(window.appData.transactions))
+            ? window.appData.transactions.length : 0;
+          const diskLen = (parsed.transactions || []).length;
+          const applyMeta = function() {
             window.appData.categories = parsed.categories;
             window.appData.materials = parsed.materials;
             window.appData.equipments = parsed.equipments;
             window.appData.customGoal = parsed.customGoal;
-            if (!window.__txCacheLoaded) window.appData.transactions = parsed.transactions || [];
+            if (parsed.customGoalPercent !== undefined) {
+              window.appData.customGoalPercent = parsed.customGoalPercent;
+            }
+          };
+          if (preferRicher && memLen > 0) {
+            if (diskLen >= memLen) {
+              applyMeta();
+              if (!window.__txCacheLoaded) window.appData.transactions = parsed.transactions;
+            } else {
+              // Keep richer memory txs; still take categories if present
+              if (parsed.categories) window.appData.categories = parsed.categories;
+            }
+          } else {
+            applyMeta();
+            // Only adopt disk txs when memory is empty / not yet loaded from IDB
+            if (!window.__txCacheLoaded && (memLen === 0 || diskLen >= memLen)) {
+              window.appData.transactions = parsed.transactions || [];
+            }
           }
         } else if (!window.appData || !Array.isArray(window.appData.transactions)) {
           window.appData = window.sanitizeAppData(window.appData || {});
@@ -252,6 +436,7 @@
             if (meta.materials) window.appData.materials = meta.materials;
             if (meta.equipments) window.appData.equipments = meta.equipments;
             if (meta.customGoal !== undefined) window.appData.customGoal = meta.customGoal;
+            if (meta.customGoalPercent !== undefined) window.appData.customGoalPercent = meta.customGoalPercent;
             window.appData = window.sanitizeAppData(window.appData);
           }
         }
@@ -259,7 +444,11 @@
         let n = SomtumStore.countTx ? await SomtumStore.countTx() : 0;
         if (n > 0 && SomtumStore.getAllTx) {
           const all = await SomtumStore.getAllTx();
-          window.appData.transactions = all || [];
+          // Do not clobber a richer in-memory list (e.g. just-added tx before IDB flush)
+          const memLen = (window.appData.transactions || []).length;
+          if (!window.__txCacheLoaded || (all && all.length >= memLen)) {
+            window.appData.transactions = all || [];
+          }
           window.__txCacheLoaded = true;
           window.__loadedRange = { start: null, end: null };
         } else {
@@ -285,21 +474,49 @@
       } catch (e) {
         console.error('async hydrate failed', e);
         window.__hydrateAppDataFromStore(true);
+      } finally {
+        window.__storeReady = true;
+        try {
+          window.dispatchEvent(new CustomEvent('somtum-app-hydrated'));
+        } catch (ev) { /* */ }
       }
+    };
+
+    /** Always load full tx set from IDB for bulk ops (export / rename / force sync) */
+    window.loadAllTransactions = async function() {
+      if (window.SomtumStore && typeof SomtumStore.getAllTx === 'function') {
+        try {
+          const all = await SomtumStore.getAllTx();
+          if (Array.isArray(all)) {
+            window.appData.transactions = all;
+            window.__txCacheLoaded = true;
+            window.__loadedRange = { start: null, end: null };
+            return all;
+          }
+        } catch (e) {
+          console.warn('loadAllTransactions', e);
+        }
+      }
+      return window.appData.transactions || [];
     };
 
     window.__hydrateAppDataFromStore(false);
 
     // After IDB migration, load meta + range (not full blob into RAM forever)
     if (window.SomtumStore && typeof window.SomtumStore.init === 'function') {
-      window.SomtumStore.init().then(async function () {
+      window.__bootPromise = window.SomtumStore.init().then(async function () {
         await window.__hydrateAppDataFromStoreAsync();
         if (typeof window.refreshDashboard === 'function' && document.getElementById('kpiTotalIncome')) {
           try { await window.refreshDashboard(); } catch (e) { /* UI may not be ready */ }
         }
+        return true;
       }).catch(function (e) {
         console.warn('SomtumStore.init from app.js:', e);
+        window.__storeReady = true;
+        return false;
       });
+    } else {
+      window.__storeReady = true;
     }
 
     window.getLocalYYYYMMDD = function(dateObj = new Date()) {
@@ -411,17 +628,21 @@
     };
 
     function createDynamicManifest() {
-      const logoUrl = "https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png";
       const manifest = {
-        name: "ส้มตำนายหนึ่ง",
-        short_name: "ส้มตำนายหนึ่ง",
+        // name = ชื่อเต็มตอนติดตั้ง / หน้าข้อมูลแอป
+        name: "ระบบบันทึกต้นทุน กำไร - STone",
+        // short_name = ชื่อใต้ไอคอนบนหน้าจอ (สั้นเพื่อไม่ถูกตัด)
+        short_name: "STone",
+        description: "ระบบบันทึกต้นทุน กำไร - STone",
         start_url: "./",
         display: "standalone",
         background_color: "#ffffff",
         theme_color: "#ea580c",
         icons: [
-          { src: logoUrl, sizes: "192x192", type: "image/png" },
-          { src: logoUrl, sizes: "512x512", type: "image/png" }
+          { src: "./icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "./icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+          { src: "./icon-maskable-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
+          { src: "./icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }
         ]
       };
       const blob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
@@ -631,7 +852,7 @@
           
           const itemsHtml = subData.items.map(it => {
             const isInc = it.type === 'income';
-            const safeId = String(it.id).replace(/'/g, "\\'");
+            const safeId = window.escapeAttr(it.id);
             return `
               <div class="flex justify-between items-center py-1.5 px-2.5 text-xs bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 my-1 shadow-2xs cursor-pointer hover:border-brand-300 transition-all" onclick="editTransaction('${safeId}')" title="แตะเพื่อแก้ไข">
                 <div class="flex flex-col">
@@ -713,9 +934,7 @@
       const totalExpense = sums.expense;
 
       const netProfit = sums.net;
-      let targetGoal = totalExpense > 0 ? window.roundMoney(totalExpense * 1.6) : (totalIncome > 0 ? totalIncome : 1000);
-      if (window.appData.customGoal && window.appData.customGoal > 0) targetGoal = window.roundMoney(window.appData.customGoal);
-
+      const targetGoal = window.resolveTargetGoal(totalExpense, totalIncome);
       const goalAchievedPercent = targetGoal > 0 ? (totalIncome / targetGoal) * 100 : 0;
 
       document.getElementById('kpiTotalIncome').innerText = `฿${totalIncome.toLocaleString('th-TH', {minimumFractionDigits:2})}`;
@@ -783,18 +1002,42 @@
 
     window.safeCalculate = function(expr) {
       if (!expr) return 0;
-      let cleaned = expr.replace(/x/gi, '*').replace(/÷/g, '/').replace(/\s+/g, '');
+      // Support × (U+00D7), x/X, ÷ as multiply/divide
+      let cleaned = String(expr)
+        .replace(/×/g, '*')
+        .replace(/x/gi, '*')
+        .replace(/÷/g, '/')
+        .replace(/\s+/g, '');
       if (!/^[0-9+\-*/().]+$/.test(cleaned)) return NaN;
       try {
-        let tokens = cleaned.match(/(\d+(?:\.\d+)?|[+\-*/()])/g);
-        if (!tokens) return NaN;
+        let rawTokens = cleaned.match(/(\d+(?:\.\d+)?|[+\-*/()])/g);
+        if (!rawTokens) return NaN;
+
+        // Fold unary +/- into the following number (start of expr, after operator, or after '(')
+        let tokens = [];
+        for (let i = 0; i < rawTokens.length; i++) {
+          const t = rawTokens[i];
+          if ((t === '-' || t === '+') &&
+              (tokens.length === 0 ||
+               '+-*/('.includes(String(tokens[tokens.length - 1])))) {
+            const next = rawTokens[i + 1];
+            if (next && !isNaN(next)) {
+              tokens.push(parseFloat((t === '-' ? '-' : '') + next));
+              i++;
+              continue;
+            }
+          }
+          if (!isNaN(t)) tokens.push(parseFloat(t));
+          else tokens.push(t);
+        }
+
         let outputQueue = [];
         let operatorStack = [];
         let precedence = { '+': 1, '-': 1, '*': 2, '/': 2 };
 
         for (let token of tokens) {
-          if (!isNaN(token)) {
-            outputQueue.push(parseFloat(token));
+          if (typeof token === 'number') {
+            outputQueue.push(token);
           } else if ('+-*/'.includes(token)) {
             while (
               operatorStack.length > 0 &&
@@ -909,53 +1152,149 @@
       const type = document.getElementById('txType').value;
       const catSelect = document.getElementById('txCategory');
       const subContainer = document.getElementById('subCatContainer');
-      const subSelect = document.getElementById('txSubCategory');
+      const nestedContainer = document.getElementById('nestedSubLevels');
       const chkContainer = document.getElementById('multiMaterialContainer');
       const chkList = document.getElementById('materialsChecklist');
       const chkLabel = document.getElementById('checklistLabel');
 
-      const catObj = window.appData.categories[type].find(c => c.name === catSelect.value);
-      subContainer.classList.add('hidden');
-      chkContainer.classList.add('hidden');
+      const catObj = (window.appData.categories[type] || []).find(c => c.name === catSelect.value);
+      if (subContainer) subContainer.classList.add('hidden');
+      if (chkContainer) chkContainer.classList.add('hidden');
+      if (nestedContainer) nestedContainer.innerHTML = '';
 
-      if (catObj) {
-        const isMaterial = catObj.flags && catObj.flags.isMaterialCategory;
-        const isEquipment = catObj.flags && catObj.flags.isEquipmentCategory;
+      if (!catObj) return;
 
-        if (isMaterial || isEquipment) {
-          chkContainer.classList.remove('hidden');
-          chkLabel.innerHTML = isMaterial ? `<i class="fa-solid fa-basket-shopping text-brand-500 mr-1"></i> เลือกวัตถุดิบ:` : `<i class="fa-solid fa-toolbox text-brand-500 mr-1"></i> เลือกอุปกรณ์:`;
-          chkList.innerHTML = '';
+      const isMaterial = catObj.flags && catObj.flags.isMaterialCategory;
+      const isEquipment = catObj.flags && catObj.flags.isEquipmentCategory;
 
-          const sourceList = isMaterial ? window.appData.materials : window.appData.equipments;
-          let existingItems = [];
-          if (_editTxIdTemp && _editTxIdTemp.subCategory) {
-            existingItems = _editTxIdTemp.subCategory.split(', ').map(s => s.trim());
-          }
+      if (isMaterial || isEquipment) {
+        chkContainer.classList.remove('hidden');
+        chkLabel.innerHTML = isMaterial
+          ? `<i class="fa-solid fa-basket-shopping text-brand-500 mr-1"></i> เลือกวัตถุดิบ:`
+          : `<i class="fa-solid fa-toolbox text-brand-500 mr-1"></i> เลือกอุปกรณ์:`;
+        chkList.innerHTML = '';
 
-          sourceList.forEach((item) => {
-            const checked = existingItems.includes(item) ? 'checked' : '';
-            chkList.innerHTML += `
-              <label class="flex items-center space-x-2 bg-white p-2 rounded-xl border border-gray-100 shadow-sm cursor-pointer hover:border-brand-300">
-                <input type="checkbox" name="matCheck" value="${escapeHTML(item)}" class="text-brand-500 focus:ring-brand-500 rounded" ${checked}>
-                <span class="text-[11px] text-gray-700 font-medium">${escapeHTML(item)}</span>
-              </label>`;
-          });
-        } else if (catObj.subs && catObj.subs.length > 0) {
-          subContainer.classList.remove('hidden');
-          subSelect.innerHTML = '';
-          catObj.subs.forEach(s => {
-            const opt = document.createElement('option');
-            opt.value = s;
-            opt.innerText = s;
-            subSelect.appendChild(opt);
-          });
-          if (_editTxIdTemp && _editTxIdTemp.subCategory && catObj.subs.includes(_editTxIdTemp.subCategory)) {
-            subSelect.value = _editTxIdTemp.subCategory;
-          }
+        const sourceList = isMaterial ? window.appData.materials : window.appData.equipments;
+        let existingItems = [];
+        if (_editTxIdTemp && _editTxIdTemp.subCategory) {
+          // multi-select uses ", " join — do not split nested path sep
+          existingItems = _editTxIdTemp.subCategory.split(', ').map(s => s.trim()).filter(Boolean);
         }
+
+        (sourceList || []).forEach((item) => {
+          const checked = existingItems.includes(item) ? 'checked' : '';
+          chkList.innerHTML += `
+            <label class="flex items-center space-x-2 bg-white p-2 rounded-xl border border-gray-100 shadow-sm cursor-pointer hover:border-brand-300">
+              <input type="checkbox" name="matCheck" value="${escapeHTML(item)}" class="text-brand-500 focus:ring-brand-500 rounded" ${checked}>
+              <span class="text-[11px] text-gray-700 font-medium">${escapeHTML(item)}</span>
+            </label>`;
+        });
+        return;
       }
-    }
+
+      if (window.categoryHasSubs(catObj)) {
+        subContainer.classList.remove('hidden');
+        // Pre-fill path from edit if present
+        let prePath = [];
+        if (_editTxIdTemp && _editTxIdTemp.subCategory && _editTxIdTemp.subCategory.indexOf(', ') === -1) {
+          prePath = String(_editTxIdTemp.subCategory).split(window.CAT_PATH_SEP).map(s => s.trim()).filter(Boolean);
+        } else if (_editTxIdTemp && _editTxIdTemp.subCategory) {
+          // legacy single sub (no path sep, no multi comma list treated as path)
+          const single = String(_editTxIdTemp.subCategory).trim();
+          if (single && single.indexOf(',') === -1) prePath = [single];
+        }
+        window.renderNestedSubSelects(catObj.subs, prePath, 0);
+      }
+    };
+
+    /** Cascading selects for nested category path (max depth under main cat). */
+    window.renderNestedSubSelects = function(rootSubs, prePath, fromLevel) {
+      const nestedContainer = document.getElementById('nestedSubLevels');
+      if (!nestedContainer) return;
+      // Remove levels from fromLevel onward
+      const existing = nestedContainer.querySelectorAll('[data-sub-level]');
+      existing.forEach(function(el) {
+        const lv = Number(el.getAttribute('data-sub-level'));
+        if (lv >= fromLevel) el.remove();
+      });
+
+      // Build path selected so far from levels 0..fromLevel-1
+      const pathSoFar = [];
+      for (let lv = 0; lv < fromLevel; lv++) {
+        const sel = nestedContainer.querySelector('select[data-sub-level="' + lv + '"]');
+        if (sel && sel.value) pathSoFar.push(sel.value);
+        else break;
+      }
+
+      const children = window.getChildrenAtPath(rootSubs, pathSoFar);
+      if (!children || children.length === 0) return;
+
+      // Depth limit: fromLevel is 0-based under main cat; max levels under main = MAX_CAT_DEPTH - 1
+      if (fromLevel >= window.MAX_CAT_DEPTH - 1) return;
+
+      const wrap = document.createElement('div');
+      wrap.setAttribute('data-sub-level', String(fromLevel));
+      wrap.className = 'mb-1.5';
+      const label = document.createElement('label');
+      label.className = 'block text-[11px] font-medium text-gray-600 mb-0.5';
+      label.textContent = fromLevel === 0 ? 'รายการย่อย' : ('ชั้นที่ ' + (fromLevel + 2));
+      const sel = document.createElement('select');
+      sel.setAttribute('data-sub-level', String(fromLevel));
+      sel.className = 'w-full border border-gray-300 rounded-xl px-3 py-2 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm';
+      const emptyOpt = document.createElement('option');
+      emptyOpt.value = '';
+      emptyOpt.textContent = '— เลือก —';
+      sel.appendChild(emptyOpt);
+      children.forEach(function(node) {
+        const opt = document.createElement('option');
+        opt.value = window.catNodeName(node);
+        opt.textContent = window.catNodeName(node);
+        sel.appendChild(opt);
+      });
+      if (prePath && prePath[fromLevel]) {
+        sel.value = prePath[fromLevel];
+      }
+      sel.addEventListener('change', function() {
+        const type = document.getElementById('txType').value;
+        const catSelect = document.getElementById('txCategory');
+        const catObj = (window.appData.categories[type] || []).find(c => c.name === catSelect.value);
+        if (!catObj) return;
+        window.renderNestedSubSelects(catObj.subs, null, fromLevel + 1);
+      });
+      wrap.appendChild(label);
+      wrap.appendChild(sel);
+      nestedContainer.appendChild(wrap);
+
+      // If prePath continues, cascade further
+      if (prePath && prePath[fromLevel]) {
+        window.renderNestedSubSelects(rootSubs, prePath, fromLevel + 1);
+      } else if (sel.value) {
+        window.renderNestedSubSelects(rootSubs, null, fromLevel + 1);
+      }
+    };
+
+    window.collectNestedSubPath = function() {
+      const nestedContainer = document.getElementById('nestedSubLevels');
+      if (!nestedContainer) return '';
+      const path = [];
+      const selects = nestedContainer.querySelectorAll('select[data-sub-level]');
+      const ordered = Array.from(selects).sort(function(a, b) {
+        return Number(a.getAttribute('data-sub-level')) - Number(b.getAttribute('data-sub-level'));
+      });
+      for (let i = 0; i < ordered.length; i++) {
+        const v = ordered[i].value;
+        if (!v) break;
+        path.push(v);
+      }
+      return path.join(window.CAT_PATH_SEP);
+    };
+
+    /** Select / deselect all multi-select checklist items (materials or equipments). */
+    window.toggleAllMaterials = function(checked) {
+      document.querySelectorAll('input[name="matCheck"]').forEach(function(el) {
+        el.checked = !!checked;
+      });
+    };
 
     window.closeTransactionModal = function() {
       document.getElementById('transactionModal').classList.add('hidden');
@@ -963,6 +1302,10 @@
 
     window.handleFormSubmit = async function(e) {
       e.preventDefault();
+      // Wait for store hydrate so we never persist against empty/partial state on cold start
+      if (typeof window.whenStoreReady === 'function') {
+        try { await window.whenStoreReady(); } catch (w) { /* proceed with best effort */ }
+      }
       calculateAmount();
       const amountVal = Number(document.getElementById('txAmount').value);
       if (isNaN(amountVal) || amountVal <= 0) {
@@ -977,14 +1320,28 @@
       const note = document.getElementById('txNote').value.trim();
       const editId = document.getElementById('editTxId').value;
 
-      const catObj = window.appData.categories[type].find(c => c.name === category);
+      // Validate date format before save
+      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        alert('กรุณาเลือกวันที่ให้ถูกต้อง');
+        return;
+      }
+
+      const catObj = (window.appData.categories && window.appData.categories[type])
+        ? window.appData.categories[type].find(c => c.name === category)
+        : null;
       let subCategory = '';
 
       if (catObj && (catObj.flags?.isMaterialCategory || catObj.flags?.isEquipmentCategory)) {
         const checked = Array.from(document.querySelectorAll('input[name="matCheck"]:checked')).map(el => el.value);
         subCategory = checked.join(', ');
-      } else if (catObj && catObj.subs && catObj.subs.length > 0) {
-        subCategory = document.getElementById('txSubCategory').value;
+      } else if (catObj && window.categoryHasSubs(catObj)) {
+        // Nested path (or single level) from cascading selects
+        subCategory = window.collectNestedSubPath();
+        // Fallback to legacy single select if present
+        if (!subCategory) {
+          const legacy = document.getElementById('txSubCategory');
+          if (legacy && legacy.value) subCategory = legacy.value;
+        }
       }
 
       const txObj = {
@@ -995,6 +1352,7 @@
       if(editId) {
         const idx = window.appData.transactions.findIndex(t => t.id === editId);
         if(idx > -1) window.appData.transactions[idx] = txObj;
+        else window.appData.transactions.push(txObj);
       } else {
         window.appData.transactions.push(txObj);
       }
@@ -1106,51 +1464,135 @@
       modal.classList.remove('hidden');
     }
 
-    window.openGoalDetailModal = function() {
-      document.getElementById('customGoalInput').value = window.appData.customGoal || '';
+    window.setGoalModeUI = function(mode) {
+      const pctBox = document.getElementById('goalModePercentBox');
+      const amtBox = document.getElementById('goalModeAmountBox');
+      const btnPct = document.getElementById('goalModeBtnPercent');
+      const btnAmt = document.getElementById('goalModeBtnAmount');
+      if (!pctBox || !amtBox) return;
+      const isPct = mode === 'percent';
+      pctBox.classList.toggle('hidden', !isPct);
+      amtBox.classList.toggle('hidden', isPct);
+      if (btnPct && btnAmt) {
+        btnPct.className = isPct
+          ? 'flex-1 py-2 rounded-xl text-xs font-bold bg-brand-600 text-white'
+          : 'flex-1 py-2 rounded-xl text-xs font-semibold bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300';
+        btnAmt.className = !isPct
+          ? 'flex-1 py-2 rounded-xl text-xs font-bold bg-brand-600 text-white'
+          : 'flex-1 py-2 rounded-xl text-xs font-semibold bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300';
+      }
+      window.updateGoalPreview();
+    };
+
+    window.updateGoalPreview = function() {
       const filteredTx = window.getTimeFilteredTransactions();
-      let totalIncome = 0, totalExpense = 0;
-      {
-        const gSums = window.sumIncomeExpense(filteredTx);
-        totalIncome = gSums.income;
-        totalExpense = gSums.expense;
-      }
-      let calc = totalExpense > 0 ? window.roundMoney(totalExpense * 1.6) : (totalIncome > 0 ? totalIncome : 1000);
-      let formulaText = '';
-      if (window.appData.customGoal && window.appData.customGoal > 0) {
-        formulaText = `เป้าหมายที่ตั้งเอง: ฿${Number(window.appData.customGoal).toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
-      } else if (totalExpense > 0) {
-        formulaText = `สูตร (รายจ่าย × 1.6): ฿${calc.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
-      } else if (totalIncome > 0) {
-        formulaText = `ไม่มีรายจ่าย → ใช้ยอดรายรับเป็นเป้าหมาย: ฿${calc.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+      const gSums = window.sumIncomeExpense(filteredTx);
+      const totalIncome = gSums.income;
+      const totalExpense = gSums.expense;
+      const el = document.getElementById('goalCalculationBreakdown');
+      if (!el) return;
+
+      const modePct = document.getElementById('goalModePercentBox') &&
+        !document.getElementById('goalModePercentBox').classList.contains('hidden');
+
+      let lines = [];
+      lines.push(`<div class="text-[11px] text-gray-500">ช่วงที่เลือก: รายรับ ฿${totalIncome.toLocaleString('th-TH', {minimumFractionDigits: 2})} · รายจ่าย ฿${totalExpense.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>`);
+
+      if (modePct) {
+        const raw = (document.getElementById('customGoalPercentInput') || {}).value;
+        const pct = Number(raw);
+        const usePct = (!isNaN(pct) && pct >= 0) ? pct : 60;
+        const goal = totalExpense > 0
+          ? window.roundMoney(totalExpense * (1 + usePct / 100))
+          : (totalIncome > 0 ? totalIncome : 1000);
+        lines.push(`<div class="font-bold text-gray-800 dark:text-gray-100 text-sm mt-1">เป้าหมาย ≈ ฿${goal.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>`);
+        lines.push(`<div class="text-[11px] text-gray-600 dark:text-gray-300">มาร์กอัป +${usePct}% บนรายจ่าย (รายจ่าย × ${(1 + usePct / 100).toFixed(2)})</div>`);
+        if (totalExpense <= 0) {
+          lines.push(`<div class="text-[11px] text-amber-600">ยังไม่มีรายจ่ายในช่วงนี้ — ใช้ยอดสำรองชั่วคราว</div>`);
+        }
       } else {
-        formulaText = `ยังไม่มีข้อมูล → เป้าหมายเริ่มต้น ฿1,000.00`;
+        const raw = (document.getElementById('customGoalInput') || {}).value;
+        const val = Number(raw);
+        if (!raw || isNaN(val) || val <= 0) {
+          const auto = window.resolveTargetGoal(totalExpense, totalIncome);
+          lines.push(`<div class="text-[11px] text-gray-500 mt-1">ใส่จำนวนเงินเพื่อดูว่าคิดเป็นกี่ % ของรายจ่าย</div>`);
+          lines.push(`<div class="text-[11px]">เป้าปัจจุบันในระบบ: ฿${auto.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>`);
+        } else {
+          const goal = window.roundMoney(val);
+          lines.push(`<div class="font-bold text-gray-800 dark:text-gray-100 text-sm mt-1">เป้าหมาย ฿${goal.toLocaleString('th-TH', {minimumFractionDigits: 2})}</div>`);
+          if (totalExpense > 0) {
+            const ofExp = (goal / totalExpense) * 100;
+            const markup = ((goal / totalExpense) - 1) * 100;
+            lines.push(`<div class="text-[11px] text-gray-600 dark:text-gray-300">คิดเป็น <b>${ofExp.toFixed(1)}%</b> ของรายจ่าย</div>`);
+            lines.push(`<div class="text-[11px] text-gray-600 dark:text-gray-300">มาร์กอัป <b>${markup >= 0 ? '+' : ''}${markup.toFixed(1)}%</b> จากรายจ่าย</div>`);
+          } else {
+            lines.push(`<div class="text-[11px] text-amber-600">ยังไม่มีรายจ่ายในช่วงนี้ — ยังเทียบ % ไม่ได้</div>`);
+          }
+          if (totalIncome > 0) {
+            const prog = (totalIncome / goal) * 100;
+            lines.push(`<div class="text-[11px] text-brand-600 mt-1">ความคืบหน้าตอนนี้ ${prog.toFixed(1)}% ของเป้านี้</div>`);
+          }
+        }
       }
-      document.getElementById('goalCalculationBreakdown').innerHTML = formulaText;
+      el.innerHTML = lines.join('');
+    };
+
+    window.openGoalDetailModal = function() {
+      const hasAmt = window.appData.customGoal && window.appData.customGoal > 0;
+      const hasPct = window.appData.customGoalPercent !== null && window.appData.customGoalPercent !== undefined;
+      const mode = hasAmt ? 'amount' : 'percent';
+      const pctInput = document.getElementById('customGoalPercentInput');
+      const amtInput = document.getElementById('customGoalInput');
+      if (pctInput) {
+        pctInput.value = hasPct ? window.appData.customGoalPercent
+          : (hasAmt ? '' : 60);
+      }
+      if (amtInput) amtInput.value = hasAmt ? window.appData.customGoal : '';
+      window.setGoalModeUI(mode);
       document.getElementById('goalDetailModal').classList.remove('hidden');
-    }
+    };
 
     window.saveCustomGoal = function() {
-      const raw = document.getElementById('customGoalInput').value.trim();
-      const val = Number(raw);
-      if (!raw || isNaN(val) || val <= 0) {
-        alert('กรุณาใส่เป้าหมายที่เป็นตัวเลขมากกว่า 0');
-        return;
+      const modePct = document.getElementById('goalModePercentBox') &&
+        !document.getElementById('goalModePercentBox').classList.contains('hidden');
+
+      if (modePct) {
+        const raw = document.getElementById('customGoalPercentInput').value.trim();
+        const pct = Number(raw);
+        if (raw === '' || isNaN(pct) || pct < 0) {
+          alert('กรุณาใส่เปอร์เซ็นต์มาร์กอัปที่ถูกต้อง (เช่น 60)');
+          return;
+        }
+        window.appData.customGoalPercent = pct;
+        window.appData.customGoal = null; // โหมด % ชนะโหมดจำนวน
+      } else {
+        const raw = document.getElementById('customGoalInput').value.trim();
+        const val = Number(raw);
+        if (!raw || isNaN(val) || val <= 0) {
+          alert('กรุณาใส่เป้าหมายที่เป็นตัวเลขมากกว่า 0');
+          return;
+        }
+        window.appData.customGoal = window.roundMoney(val);
+        window.appData.customGoalPercent = null;
       }
-      window.appData.customGoal = window.roundMoney(val);
       window.syncDataToCloud(true);
       window.refreshDashboard();
       window.showToast('ตั้งเป้าหมายสำเร็จ');
       document.getElementById('goalDetailModal').classList.add('hidden');
-    }
+    };
 
     window.clearCustomGoal = function() {
       window.appData.customGoal = null;
-      document.getElementById('customGoalInput').value = '';
+      window.appData.customGoalPercent = null;
+      const pctInput = document.getElementById('customGoalPercentInput');
+      const amtInput = document.getElementById('customGoalInput');
+      if (pctInput) pctInput.value = '60';
+      if (amtInput) amtInput.value = '';
+      window.setGoalModeUI('percent');
       window.syncDataToCloud(true);
       window.refreshDashboard();
-      window.showToast('กลับไปใช้เป้าหมายสูตรปกติ');
-    }
+      window.showToast('กลับไปใช้เป้าหมายสูตรปกติ (+60%)');
+    };
 
     function renderTransactionHistory(txList) {
       const listElem = document.getElementById('transactionList');
@@ -1289,9 +1731,14 @@
           window.showConfirmModal("ยืนยันการนำเข้าข้อมูล", "ข้อมูลใหม่จะถูกนำมาแทนที่ข้อมูลปัจจุบัน คุณต้องการดำเนินการต่อหรือไม่?", async () => {
             window.showToast("กำลังนำเข้าข้อมูล...");
             const newData = window.sanitizeAppData(parsed);
-            window.appData = newData;
+            const ownerUid = window.currentUser ? window.currentUser.uid : null;
             try {
-              // CRITICAL: write ALL transactions into IDB (not just memory / meta)
+              // CRITICAL: wipe old IDB txs first — persistAppState only PUTs, never deletes orphans
+              if (window.SomtumStore && SomtumStore.clearAllUserData) {
+                await SomtumStore.clearAllUserData();
+              }
+              if (ownerUid) SomtumStore.setItem('somtumDataOwnerUid', ownerUid);
+              window.appData = newData;
               if (window.SomtumStore && SomtumStore.persistAppState) {
                 await SomtumStore.persistAppState(newData, { writeAllTx: true });
                 if (SomtumStore.markDirty) {
@@ -1306,6 +1753,7 @@
                 SomtumStore.setItem('somtumAppData', JSON.stringify(newData));
               } catch (e2) { /* quota ok — IDB is source of truth */ }
               window.__txCacheLoaded = false;
+              window.__loadedRange = { start: null, end: null };
               if (typeof window.ensureTransactionsLoaded === 'function') {
                 await window.ensureTransactionsLoaded(true);
               }
@@ -1325,6 +1773,7 @@
                   materials: newData.materials,
                   equipments: newData.equipments,
                   customGoal: newData.customGoal,
+                  customGoalPercent: newData.customGoalPercent,
                   updatedAt: new Date().toISOString()
                 }, { merge: true });
 
@@ -1505,35 +1954,213 @@
 
     window.renderCategoryTree = function() {
       const list = document.getElementById('fullCategoryTree');
-      if(!list) return;
+      if (!list) return;
       list.innerHTML = '';
 
-      (window.appData.categories[managerType] || []).forEach((cat, i) => {
-        let subs = '';
-        if(cat.subs && cat.subs.length > 0) {
-          subs = cat.subs.map((s, j) => `<span class="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded text-[10px] inline-flex items-center gap-1 mb-1">${escapeHTML(s)} <button onclick="renameSubCategory(${i}, ${j})" class="text-blue-500 hover:text-blue-700" title="แก้ไข"><i class="fa-solid fa-pen text-[9px]"></i></button> <button onclick="deleteSubCategory(${i}, ${j})" class="text-gray-400 hover:text-rose-500" title="ลบ"><i class="fa-solid fa-xmark"></i></button></span>`).join(' ');
-        }
+      (window.appData.categories[managerType] || []).forEach(function(cat, i) {
         let badge = '';
-        if(cat.flags?.isMaterialCategory) badge = `<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-medium">วัตถุดิบ</span>`;
-        if(cat.flags?.isEquipmentCategory) badge = `<span class="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-medium">อุปกรณ์</span>`;
+        if (cat.flags?.isMaterialCategory) badge = `<span class="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-medium">วัตถุดิบ</span>`;
+        if (cat.flags?.isEquipmentCategory) badge = `<span class="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-medium">อุปกรณ์</span>`;
+
+        const isListCat = !!(cat.flags?.isMaterialCategory || cat.flags?.isEquipmentCategory);
+        const treeHtml = isListCat
+          ? '<span class="text-[10px] text-gray-400 italic">เลือกจากลิสต์วัตถุดิบ/อุปกรณ์อัตโนมัติ</span>'
+          : window.renderSubTreeHtml(cat.subs || [], [i], 1);
 
         list.innerHTML += `
           <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3">
             <div class="flex justify-between items-center mb-2">
               <span class="font-bold text-xs text-gray-800 dark:text-gray-100 flex items-center gap-1.5"><i class="fa-solid fa-folder text-brand-500"></i> ${escapeHTML(cat.name)} ${badge}</span>
               <div class="flex items-center gap-2">
-                <button onclick="renameMainCategory(${i})" class="text-blue-500 hover:text-blue-700 text-xs" title="แก้ไขชื่อหมวดหมู่"><i class="fa-solid fa-pen"></i></button>
-                <button onclick="deleteMainCategory(${i})" class="text-gray-400 hover:text-rose-500 text-xs" title="ลบหมวดหมู่"><i class="fa-solid fa-trash"></i></button>
+                <button type="button" onclick="renameMainCategory(${i})" class="text-blue-500 hover:text-blue-700 text-xs" title="แก้ไขชื่อหมวดหมู่"><i class="fa-solid fa-pen"></i></button>
+                <button type="button" onclick="deleteMainCategory(${i})" class="text-gray-400 hover:text-rose-500 text-xs" title="ลบหมวดหมู่"><i class="fa-solid fa-trash"></i></button>
               </div>
             </div>
-            <div class="flex flex-wrap gap-1 mb-2">${subs || (cat.flags?.isMaterialCategory || cat.flags?.isEquipmentCategory ? '<span class="text-[10px] text-gray-400 italic">เลือกจากลิสต์วัตถุดิบ/อุปกรณ์อัตโนมัติ</span>' : '<span class="text-[10px] text-gray-400 italic">ไม่มีรายการย่อย</span>')}</div>
+            <div class="mb-2 space-y-1">${treeHtml}</div>
+            ${isListCat ? '' : `
             <div class="flex gap-1.5">
-              <input type="text" id="newSub-${i}" placeholder="เพิ่มรายการย่อย..." class="flex-1 text-[11px] border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:outline-none">
-              <button onclick="addSubCategory(${i})" class="bg-gray-800 dark:bg-gray-600 hover:bg-gray-900 dark:hover:bg-gray-500 text-white text-[11px] px-3 py-1.5 rounded-lg">+ เพิ่ม</button>
-            </div>
+              <input type="text" id="newSub-${i}" placeholder="เพิ่มรายการย่อยชั้น 2..." class="flex-1 text-[11px] border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100">
+              <button type="button" onclick="addSubCategory(${i})" class="bg-gray-800 dark:bg-gray-600 hover:bg-gray-900 dark:hover:bg-gray-500 text-white text-[11px] px-3 py-1.5 rounded-lg">+ เพิ่ม</button>
+            </div>`}
           </div>`;
       });
-    }
+    };
+
+    /**
+     * Render nested subs for category manager.
+     * pathIdx = [catIndex, ...childIndices] for CRUD callbacks.
+     * depth = current tree depth (1 = under main category → level 2 of 5).
+     */
+    window.renderSubTreeHtml = function(subs, pathIdx, depth) {
+      if (!subs || subs.length === 0) {
+        return '<span class="text-[10px] text-gray-400 italic">ไม่มีรายการย่อย</span>';
+      }
+      let html = '';
+      const pad = Math.min((depth - 1) * 12, 48);
+      subs.forEach(function(node, j) {
+        const name = window.catNodeName(node);
+        const kids = window.catNodeChildren(node);
+        const childPath = pathIdx.concat([j]);
+        const pathStr = childPath.join(',');
+        const canAddChild = depth < (window.MAX_CAT_DEPTH - 1); // depth 1..3 can add → max depth 4 under main → total levels 5
+        html += `<div class="border-l-2 border-brand-100 pl-2" style="margin-left:${pad}px">
+          <div class="flex flex-wrap items-center gap-1 mb-1">
+            <span class="bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 px-2 py-0.5 rounded text-[10px] inline-flex items-center gap-1">
+              ${kids.length ? '<i class="fa-solid fa-folder-open text-brand-400 text-[9px]"></i>' : '<i class="fa-solid fa-tag text-gray-400 text-[9px]"></i>'}
+              ${escapeHTML(name)}
+              <button type="button" onclick="renameSubCategoryPath('${pathStr}')" class="text-blue-500 hover:text-blue-700" title="แก้ไข"><i class="fa-solid fa-pen text-[9px]"></i></button>
+              <button type="button" onclick="deleteSubCategoryPath('${pathStr}')" class="text-gray-400 hover:text-rose-500" title="ลบ"><i class="fa-solid fa-xmark"></i></button>
+            </span>
+          </div>`;
+        if (kids.length > 0) {
+          html += window.renderSubTreeHtml(kids, childPath, depth + 1);
+        }
+        if (canAddChild) {
+          html += `<div class="flex gap-1 mb-1.5" style="margin-left:4px">
+            <input type="text" id="newNested-${pathStr.replace(/,/g,'-')}" placeholder="เพิ่มชั้นถัดไป (สูงสุด ${window.MAX_CAT_DEPTH} ชั้น)..." class="flex-1 text-[10px] border border-gray-200 dark:border-gray-600 rounded px-1.5 py-1 bg-white dark:bg-gray-800">
+            <button type="button" onclick="addNestedCategory('${pathStr}')" class="bg-brand-500 hover:bg-brand-600 text-white text-[10px] px-2 py-1 rounded">+</button>
+          </div>`;
+        }
+        html += '</div>';
+      });
+      return html;
+    };
+
+    /** Resolve array reference for path [catIdx, ...indices] → parent array + last index */
+    window.resolveCatPath = function(pathStr) {
+      const parts = String(pathStr).split(',').map(Number);
+      if (!parts.length || parts.some(function(n) { return isNaN(n); })) return null;
+      const catIdx = parts[0];
+      const cat = (window.appData.categories[managerType] || [])[catIdx];
+      if (!cat) return null;
+      if (parts.length === 1) {
+        return { cat: cat, parentArr: null, index: catIdx, node: cat, depth: 0 };
+      }
+      let arr = cat.subs;
+      if (!Array.isArray(arr)) return null;
+      for (let d = 1; d < parts.length - 1; d++) {
+        const node = arr[parts[d]];
+        if (node == null) return null;
+        // Promote string leaf to branch if we need to go deeper (should not happen in resolve)
+        if (typeof node === 'string') return null;
+        if (!Array.isArray(node.children)) node.children = [];
+        arr = node.children;
+      }
+      const last = parts[parts.length - 1];
+      return { cat: cat, parentArr: arr, index: last, node: arr[last], depth: parts.length - 1 };
+    };
+
+    window.addNestedCategory = function(pathStr) {
+      const inputId = 'newNested-' + String(pathStr).replace(/,/g, '-');
+      const input = document.getElementById(inputId);
+      const val = input ? input.value.trim() : '';
+      if (!val) return;
+      const resolved = window.resolveCatPath(pathStr);
+      if (!resolved || resolved.node == null) return;
+      // Promote string leaf → branch object so we can attach children
+      let node = resolved.node;
+      if (typeof node === 'string') {
+        node = { name: node, children: [] };
+        resolved.parentArr[resolved.index] = node;
+      }
+      if (!Array.isArray(node.children)) node.children = [];
+      // depth of new child = resolved.depth + 1 (under main); max under main = MAX_CAT_DEPTH - 1
+      if (resolved.depth + 1 >= window.MAX_CAT_DEPTH - 1 && false) { /* allow add at this level; children of new node limited by UI */ }
+      if (resolved.depth >= window.MAX_CAT_DEPTH - 1) {
+        alert('ซ้อนได้สูงสุด ' + window.MAX_CAT_DEPTH + ' ชั้น');
+        return;
+      }
+      const exists = node.children.some(function(c) {
+        return window.catNodeName(c).toLowerCase() === val.toLowerCase();
+      });
+      if (exists) { alert('มีรายการนี้อยู่แล้วในชั้นนี้'); return; }
+      node.children.push(val);
+      if (input) input.value = '';
+      window.syncDataToCloud(true);
+      window.renderCategoryTree();
+      window.showToast('เพิ่มหมวดซ้อนเรียบร้อย');
+    };
+
+    window.renameSubCategoryPath = function(pathStr) {
+      const resolved = window.resolveCatPath(pathStr);
+      if (!resolved || resolved.node == null) return;
+      const oldName = window.catNodeName(resolved.node);
+      window.openRenameModal('แก้ไขรายการย่อย', 'ชื่อใหม่จะถูกอัปเดตในรายการที่บันทึกไว้แล้วด้วย', oldName, async function(trimmed) {
+        if (trimmed === oldName) return;
+        const siblings = resolved.parentArr || [];
+        if (siblings.some(function(s, idx) {
+          return idx !== resolved.index && window.catNodeName(s).toLowerCase() === trimmed.toLowerCase();
+        })) {
+          alert('มีรายการย่อยนี้อยู่แล้ว');
+          return;
+        }
+        if (typeof resolved.node === 'string') {
+          resolved.parentArr[resolved.index] = trimmed;
+        } else if (window.isCatBranch(resolved.node)) {
+          resolved.node.name = trimmed;
+        }
+        // Update transactions: replace segment in nested path or exact match
+        if (typeof window.loadAllTransactions === 'function') {
+          try { await window.loadAllTransactions(); } catch (e) { console.warn(e); }
+        }
+        let updatedCount = 0;
+        const catName = resolved.cat.name;
+        for (const tx of (window.appData.transactions || [])) {
+          if (tx.type !== managerType || tx.category !== catName) continue;
+          let changed = false;
+          if (tx.subCategory === oldName) {
+            tx.subCategory = trimmed;
+            changed = true;
+          } else if (tx.subCategory && tx.subCategory.indexOf(window.CAT_PATH_SEP) >= 0) {
+            const parts = tx.subCategory.split(window.CAT_PATH_SEP).map(function(s) { return s.trim(); });
+            let hit = false;
+            for (let p = 0; p < parts.length; p++) {
+              if (parts[p] === oldName) { parts[p] = trimmed; hit = true; }
+            }
+            if (hit) {
+              tx.subCategory = parts.join(window.CAT_PATH_SEP);
+              changed = true;
+            }
+          } else if (tx.subCategory && tx.subCategory.includes(oldName)) {
+            // multi-select comma list
+            const parts = tx.subCategory.split(',').map(function(s) { return s.trim(); });
+            const idx = parts.indexOf(oldName);
+            if (idx !== -1) {
+              parts[idx] = trimmed;
+              tx.subCategory = parts.join(', ');
+              changed = true;
+            }
+          }
+          if (changed) {
+            updatedCount++;
+            if (window.SomtumStore && SomtumStore.putTx) {
+              try {
+                await SomtumStore.putTx(tx);
+                if (SomtumStore.markDirty) await SomtumStore.markDirty(tx.id);
+              } catch (e) { console.warn('putTx after renameSubPath', e); }
+            }
+          }
+        }
+        window.syncDataToCloud(true);
+        window.renderCategoryTree();
+        window.refreshDashboard();
+        window.showToast(updatedCount > 0
+          ? 'แก้ไขรายการย่อยเรียบร้อย (อัปเดต ' + updatedCount + ' รายการ)'
+          : 'แก้ไขรายการย่อยเรียบร้อย');
+      });
+    };
+
+    window.deleteSubCategoryPath = function(pathStr) {
+      const resolved = window.resolveCatPath(pathStr);
+      if (!resolved || resolved.node == null) return;
+      const subName = window.catNodeName(resolved.node);
+      window.showConfirmModal('ยืนยันการลบรายการย่อย', 'ต้องการลบ "' + subName + '" และรายการซ้อนภายใต้ (ถ้ามี) ใช่หรือไม่?', function() {
+        resolved.parentArr.splice(resolved.index, 1);
+        window.syncDataToCloud(true);
+        window.renderCategoryTree();
+        window.showToast('ลบรายการย่อยแล้ว');
+      });
+    };
 
     // Rename main category + update all related transactions (via modal)
     window.renameMainCategory = function(i) {
@@ -1548,13 +2175,24 @@
           return;
         }
         cat.name = trimmed;
+        // Bulk ops must see full dataset, not only current filter cache
+        if (typeof window.loadAllTransactions === 'function') {
+          try { await window.loadAllTransactions(); } catch (e) { console.warn(e); }
+        }
         let updatedCount = 0;
-        (window.appData.transactions || []).forEach(tx => {
+        for (const tx of (window.appData.transactions || [])) {
           if (tx.type === managerType && tx.category === oldName) {
             tx.category = trimmed;
             updatedCount++;
+            // Persist renamed tx to IndexedDB + mark dirty for offline re-sync
+            if (window.SomtumStore && SomtumStore.putTx) {
+              try {
+                await SomtumStore.putTx(tx);
+                if (SomtumStore.markDirty) await SomtumStore.markDirty(tx.id);
+              } catch (e) { console.warn('putTx after renameMain', e); }
+            }
           }
-        });
+        }
         window.syncDataToCloud(true);
         if (window.currentUser && updatedCount > 0) {
           try {
@@ -1594,22 +2232,35 @@
           return;
         }
         cat.subs[j] = trimmed;
+        if (typeof window.loadAllTransactions === 'function') {
+          try { await window.loadAllTransactions(); } catch (e) { console.warn(e); }
+        }
         let updatedCount = 0;
-        (window.appData.transactions || []).forEach(tx => {
-          if (tx.type !== managerType || tx.category !== cat.name) return;
+        for (const tx of (window.appData.transactions || [])) {
+          if (tx.type !== managerType || tx.category !== cat.name) continue;
+          let changed = false;
           if (tx.subCategory === oldSub) {
             tx.subCategory = trimmed;
-            updatedCount++;
+            changed = true;
           } else if (tx.subCategory && tx.subCategory.includes(oldSub)) {
             const parts = tx.subCategory.split(',').map(s => s.trim());
             const idx = parts.indexOf(oldSub);
             if (idx !== -1) {
               parts[idx] = trimmed;
               tx.subCategory = parts.join(', ');
-              updatedCount++;
+              changed = true;
             }
           }
-        });
+          if (changed) {
+            updatedCount++;
+            if (window.SomtumStore && SomtumStore.putTx) {
+              try {
+                await SomtumStore.putTx(tx);
+                if (SomtumStore.markDirty) await SomtumStore.markDirty(tx.id);
+              } catch (e) { console.warn('putTx after renameSub', e); }
+            }
+          }
+        }
         window.syncDataToCloud(true);
         if (window.currentUser && updatedCount > 0) {
           try {
@@ -1684,32 +2335,30 @@
     }
 
     window.addSubCategory = function(i) {
-      const input = document.getElementById(`newSub-${i}`);
-      const val = input.value.trim();
-      if(!val) return;
+      const input = document.getElementById('newSub-' + i);
+      const val = input ? input.value.trim() : '';
+      if (!val) return;
 
       const cat = window.appData.categories[managerType][i];
-      if(!cat.subs) cat.subs = [];
-      if(cat.subs.includes(val)) {
+      if (!cat.subs) cat.subs = [];
+      const exists = cat.subs.some(function(s) {
+        return window.catNodeName(s).toLowerCase() === val.toLowerCase();
+      });
+      if (exists) {
         alert('มีรายการย่อยนี้อยู่แล้ว');
         return;
       }
 
       cat.subs.push(val);
-      input.value = '';
+      if (input) input.value = '';
       window.syncDataToCloud(true);
       window.renderCategoryTree();
       window.showToast('เพิ่มรายการย่อยแล้ว');
     }
 
     window.deleteSubCategory = function(i, j) {
-      const subName = window.appData.categories[managerType][i]?.subs?.[j] || 'รายการนี้';
-      window.showConfirmModal("ยืนยันการลบรายการย่อย", `ต้องการลบ "${subName}" ใช่หรือไม่?`, () => {
-        window.appData.categories[managerType][i].subs.splice(j, 1);
-        window.syncDataToCloud(true);
-        window.renderCategoryTree();
-        window.showToast('ลบรายการย่อยแล้ว');
-      });
+      // Legacy entry → delegate to path-based delete
+      window.deleteSubCategoryPath(String(i) + ',' + String(j));
     }
 
     window.renderMaterialTags = function() {
@@ -1757,15 +2406,18 @@
           return;
         }
         arr[idx] = trimmed;
+        if (typeof window.loadAllTransactions === 'function') {
+          try { await window.loadAllTransactions(); } catch (e) { console.warn(e); }
+        }
         let updatedCount = 0;
-        (window.appData.transactions || []).forEach(tx => {
-          if (!tx.subCategory) return;
+        for (const tx of (window.appData.transactions || [])) {
+          if (!tx.subCategory) continue;
+          let changed = false;
           if (tx.subCategory === oldName) {
             tx.subCategory = trimmed;
-            updatedCount++;
+            changed = true;
           } else if (tx.subCategory.includes(oldName)) {
             const parts = tx.subCategory.split(',').map(s => s.trim());
-            let changed = false;
             for (let i = 0; i < parts.length; i++) {
               if (parts[i] === oldName) {
                 parts[i] = trimmed;
@@ -1774,10 +2426,18 @@
             }
             if (changed) {
               tx.subCategory = parts.join(', ');
-              updatedCount++;
             }
           }
-        });
+          if (changed) {
+            updatedCount++;
+            if (window.SomtumStore && SomtumStore.putTx) {
+              try {
+                await SomtumStore.putTx(tx);
+                if (SomtumStore.markDirty) await SomtumStore.markDirty(tx.id);
+              } catch (e) { console.warn('putTx after renameMaterial', e); }
+            }
+          }
+        }
         window.syncDataToCloud(true);
         if (window.currentUser && updatedCount > 0) {
           try {
@@ -1828,30 +2488,37 @@
         "ข้อมูลรายรับ-รายจ่าย หมวดหมู่ และเป้าหมายทั้งหมดจะถูกลบทั้งในเครื่องและบน Cloud (ถ้าล็อกอินอยู่) การกระทำนี้ไม่สามารถย้อนกลับได้",
         async () => {
           window.showToast("กำลังล้างข้อมูล...");
+          // Clear IndexedDB tx + meta stores + LS keys completely
+          if (window.SomtumStore && SomtumStore.clearAllUserData) {
+            try {
+              await SomtumStore.clearAllUserData();
+            } catch (e) {
+              console.error('clearAllUserData failed', e);
+            }
+          }
           window.appData = {
             transactions: [],
             categories: JSON.parse(JSON.stringify(window.DEFAULT_CATEGORIES)),
             materials: [...window.DEFAULT_MATERIALS],
             equipments: [...window.DEFAULT_EQUIPMENTS],
-            customGoal: null
+            customGoal: null,
+            customGoalPercent: null
           };
+          // Persist empty meta (categories defaults) without re-seeding old txs
           window.saveLocalOnly();
-          SomtumStore.removeItem('somtumHasUnsyncedData');
-          SomtumStore.removeItem('somtumLastSyncedTimestamp');
-          SomtumStore.removeItem('somtumAutoBackup');
-          SomtumStore.removeItem('somtumAutoBackupTime');
-          SomtumStore.removeItem('somtumAutoBackupUid');
-          SomtumStore.removeItem('somtumLastGoalNotified');
           if (typeof lastAutoBackupHash !== 'undefined') lastAutoBackupHash = '';
 
           if (window.currentUser && window.db) {
             try {
+              // Restore owner uid after clearAll wiped it
+              SomtumStore.setItem('somtumDataOwnerUid', window.currentUser.uid);
               const settingsRef = window.doc(window.db, "users", window.currentUser.uid, "meta", "settings");
               await window.setDoc(settingsRef, {
                 categories: window.appData.categories,
                 materials: window.appData.materials,
                 equipments: window.appData.equipments,
                 customGoal: null,
+                customGoalPercent: null,
                 updatedAt: new Date().toISOString()
               });
               const txCollRef = window.collection(window.db, "users", window.currentUser.uid, "transactions");
@@ -1902,8 +2569,7 @@
       const filteredTx = window.getTimeFilteredTransactions();
       const gSums = window.sumIncomeExpense(filteredTx);
       let totalIncome = gSums.income, totalExpense = gSums.expense;
-      let targetGoal = totalExpense > 0 ? window.roundMoney(totalExpense * 1.6) : (totalIncome > 0 ? totalIncome : 1000);
-      if (window.appData.customGoal && window.appData.customGoal > 0) targetGoal = window.appData.customGoal;
+      const targetGoal = window.resolveTargetGoal(totalExpense, totalIncome);
       const pct = targetGoal > 0 ? (totalIncome / targetGoal) * 100 : 0;
       const now = Date.now();
       const lastNotified = parseInt(SomtumStore.getItem('somtumLastGoalNotified') || '0', 10);
@@ -1913,7 +2579,7 @@
         window.showToast('🎉 ยินดีด้วย! บรรลุเป้าหมายแล้ว ' + pct.toFixed(0) + '%', 'success');
         if (typeof Notification !== 'undefined') {
           if (Notification.permission === 'granted') {
-            new Notification('ส้มตำนายหนึ่ง', { body: 'บรรลุเป้าหมายรายรับแล้ว! ' + pct.toFixed(0) + '%', icon: 'https://raw.githubusercontent.com/uburiram/STone/37019fb50a43edddf1b2aaa534de2276b231e57e/icon_256x256.png' });
+            new Notification('ระบบบันทึกต้นทุน กำไร - STone', { body: 'บรรลุเป้าหมายรายรับแล้ว! ' + pct.toFixed(0) + '%', icon: './icon-192.png' });
           } else if (Notification.permission !== 'denied') {
             Notification.requestPermission();
           }
@@ -1933,8 +2599,17 @@
       };
     }
 
-    // ----- Auto Backup (stronger hash + scoped) -----
+    // ----- Auto Backup (content hash + scoped) -----
     let lastAutoBackupHash = '';
+    /** djb2 hash — catches any content change (notes, category names, etc.) */
+    function simpleContentHash(str) {
+      let h = 5381;
+      for (let i = 0; i < str.length; i++) {
+        h = ((h << 5) + h) + str.charCodeAt(i);
+        h = h >>> 0; // force uint32
+      }
+      return h.toString(36);
+    }
     window.performAutoBackup = async function() {
       try {
         let data = window.appData;
@@ -1942,14 +2617,24 @@
           data = await SomtumStore.buildLegacyAppData(window.appData);
         }
         const dataStr = JSON.stringify(data);
-        let amountSum = 0;
-        (data.transactions || []).forEach(t => amountSum += Number(t.amount) || 0);
-        const hash = dataStr.length + '_' + (data.transactions || []).length + '_' + amountSum.toFixed(2);
-        if (hash !== lastAutoBackupHash) {
-          SomtumStore.setItem('somtumAutoBackup', dataStr);
-          SomtumStore.setItem('somtumAutoBackupTime', new Date().toISOString());
-          if (window.currentUser) SomtumStore.setItem('somtumAutoBackupUid', window.currentUser.uid);
-          lastAutoBackupHash = hash;
+        const hash = simpleContentHash(dataStr);
+        if (hash === lastAutoBackupHash) return;
+        // Respect LS size guard used by SomtumStore (avoid silent quota failures)
+        const maxChars = (window.SomtumStore && SomtumStore.LS_APPDATA_MAX_CHARS)
+          ? SomtumStore.LS_APPDATA_MAX_CHARS
+          : 400000;
+        if (dataStr.length > maxChars) {
+          // Still try IDB-only path via setItem (storage skips oversized LS mirror)
+          console.warn('[autoBackup] large payload', dataStr.length, 'chars — IDB/kv only');
+        }
+        SomtumStore.setItem('somtumAutoBackup', dataStr);
+        SomtumStore.setItem('somtumAutoBackupTime', new Date().toISOString());
+        if (window.currentUser) SomtumStore.setItem('somtumAutoBackupUid', window.currentUser.uid);
+        lastAutoBackupHash = hash;
+        // Verify read-back for critical recovery path
+        const check = SomtumStore.getItem('somtumAutoBackup');
+        if (!check && dataStr.length <= maxChars) {
+          console.warn('[autoBackup] write verification failed (quota?)');
         }
       } catch (e) { console.warn('Auto backup failed', e); }
     };
@@ -1972,11 +2657,25 @@
       }
       window.showConfirmModal('กู้คืนจาก Auto Backup', 'ข้อมูลปัจจุบันจะถูกแทนที่ด้วยสำรองเมื่อ ' + (t ? new Date(t).toLocaleString('th-TH') : 'ไม่ทราบเวลา') + ' ต้องการดำเนินการต่อหรือไม่?', async () => {
         try {
-          window.appData = window.sanitizeAppData(JSON.parse(bak));
-          if (window.SomtumStore && SomtumStore.persistAppState) {
-            await SomtumStore.persistAppState(window.appData, { writeAllTx: true });
-            window.__txCacheLoaded = false;
+          // Parse backup BEFORE clear — clearAllUserData wipes somtumAutoBackup keys
+          const restored = window.sanitizeAppData(JSON.parse(bak));
+          const ownerUid = window.currentUser ? window.currentUser.uid : (bakUid || null);
+          if (window.SomtumStore && SomtumStore.clearAllUserData) {
+            await SomtumStore.clearAllUserData();
           }
+          if (ownerUid) SomtumStore.setItem('somtumDataOwnerUid', ownerUid);
+          window.appData = restored;
+          if (window.SomtumStore && SomtumStore.persistAppState) {
+            await SomtumStore.persistAppState(restored, { writeAllTx: true });
+            if (SomtumStore.markDirty) {
+              for (const tx of (restored.transactions || [])) {
+                if (tx && tx.id) await SomtumStore.markDirty(tx.id);
+              }
+            }
+            if (SomtumStore.markMetaDirty) SomtumStore.markMetaDirty();
+          }
+          window.__txCacheLoaded = false;
+          window.__loadedRange = { start: null, end: null };
           window.saveLocalOnly();
           window.syncDataToCloud();
           if (typeof window.ensureTransactionsLoaded === 'function') {
@@ -2072,7 +2771,7 @@
       const net = pdfSums.net;
 
       doc.setFontSize(16);
-      doc.text('รายงานรายรับ-รายจ่าย ส้มตำนายหนึ่ง', 105, 15, { align: 'center' });
+      doc.text('รายงานรายรับ-รายจ่าย - STone', 105, 15, { align: 'center' });
       doc.setFontSize(10);
       doc.text('วันที่พิมพ์: ' + new Date().toLocaleString('th-TH'), 105, 22, { align: 'center' });
       doc.setFontSize(9);
@@ -2153,85 +2852,120 @@
 
     // ----- Monthly Report -----
     window.openMonthlyReportModal = function() {
+      const monthInput = document.getElementById('monthlyReportMonth');
+      if (monthInput) {
+        const now = new Date();
+        const ym = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+        if (!monthInput.value) monthInput.value = ym;
+      }
+      window.renderMonthlyReport();
+      document.getElementById('monthlyReportModal').classList.remove('hidden');
+    };
+
+    window.renderMonthlyReport = function() {
       const body = document.getElementById('monthlyReportBody');
       if (!body) return;
-      const now = new Date();
-      const y = now.getFullYear();
-      const m = now.getMonth(); // 0-11
+
+      const monthInput = document.getElementById('monthlyReportMonth');
+      let y, m;
+      if (monthInput && monthInput.value && /^\d{4}-\d{2}$/.test(monthInput.value)) {
+        const parts = monthInput.value.split('-');
+        y = Number(parts[0]);
+        m = Number(parts[1]) - 1;
+      } else {
+        const now = new Date();
+        y = now.getFullYear();
+        m = now.getMonth();
+      }
+      const selected = new Date(y, m, 1);
       const prev = new Date(y, m - 1, 1);
       const prevY = prev.getFullYear();
       const prevM = prev.getMonth();
 
       const sumMonth = (year, month) => {
-        let inc = 0, exp = 0;
+        let inc = 0, exp = 0, count = 0;
         const catMap = {};
         (window.appData.transactions || []).forEach(tx => {
           const d = parseLocalDate(tx.date);
           if (!d || d.getFullYear() !== year || d.getMonth() !== month) return;
           const amt = Number(tx.amount) || 0;
+          count++;
           if (tx.type === 'income') inc += amt;
           else exp += amt;
           const key = (tx.type === 'income' ? 'รับ: ' : 'จ่าย: ') + (tx.category || 'ไม่ระบุ');
           catMap[key] = (catMap[key] || 0) + amt;
         });
         const topCats = Object.entries(catMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
-        return { inc, exp, net: inc - exp, topCats };
+        return { inc, exp, net: inc - exp, topCats, count };
       };
 
       const cur = sumMonth(y, m);
       const prv = sumMonth(prevY, prevM);
-      const pct = (a, b) => b === 0 ? (a === 0 ? '0%' : 'ใหม่') : ((a - b) / Math.abs(b) * 100).toFixed(1) + '%';
-      const monthName = now.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
+      const pct = (a, b) => {
+        if (b === 0) return a === 0 ? 'เท่าเดิม' : 'เพิ่มขึ้นจากศูนย์';
+        const v = ((a - b) / Math.abs(b) * 100);
+        const sign = v > 0 ? 'เพิ่มขึ้น ' : (v < 0 ? 'ลดลง ' : '');
+        return sign + Math.abs(v).toFixed(1) + '% จากเดือนก่อน';
+      };
+      const monthName = selected.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
       const prevName = prev.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
+      const margin = cur.inc > 0 ? (cur.net / cur.inc * 100) : null;
 
       body.innerHTML = `
-        <div class="text-center mb-2">
-          <div class="text-sm font-bold text-gray-800 dark:text-gray-100">${monthName}</div>
-          <div class="text-[11px] text-gray-500">เทียบกับ ${prevName}</div>
+        <div class="text-center shrink-0">
+          <div class="text-base font-bold text-gray-800 dark:text-gray-100 leading-tight">${monthName}</div>
+          <div class="text-[11px] text-gray-500 mt-0.5">เทียบกับ ${prevName} · ${cur.count} รายการ</div>
         </div>
-        <div class="grid grid-cols-3 gap-2">
-          <div class="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-3 text-center">
-            <div class="text-[10px] text-emerald-700 dark:text-emerald-300">รายรับ</div>
-            <div class="text-sm font-bold text-emerald-700">฿${cur.inc.toLocaleString('th-TH', {minimumFractionDigits:0})}</div>
-            <div class="text-[10px] text-gray-500">${pct(cur.inc, prv.inc)}</div>
+        <div class="grid grid-cols-3 gap-1.5 shrink-0">
+          <div class="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl px-1.5 py-2.5 text-center">
+            <div class="text-[10px] font-semibold text-emerald-800 dark:text-emerald-300">รายรับ</div>
+            <div class="text-sm font-bold text-emerald-700 leading-tight mt-0.5">฿${cur.inc.toLocaleString('th-TH', {minimumFractionDigits: 0})}</div>
+            <div class="text-[9px] text-gray-500 mt-1 leading-tight">${pct(cur.inc, prv.inc)}</div>
           </div>
-          <div class="bg-rose-50 dark:bg-rose-900/20 rounded-xl p-3 text-center">
-            <div class="text-[10px] text-rose-700 dark:text-rose-300">รายจ่าย</div>
-            <div class="text-sm font-bold text-rose-700">฿${cur.exp.toLocaleString('th-TH', {minimumFractionDigits:0})}</div>
-            <div class="text-[10px] text-gray-500">${pct(cur.exp, prv.exp)}</div>
+          <div class="bg-rose-50 dark:bg-rose-900/20 rounded-xl px-1.5 py-2.5 text-center">
+            <div class="text-[10px] font-semibold text-rose-800 dark:text-rose-300">รายจ่าย</div>
+            <div class="text-sm font-bold text-rose-700 leading-tight mt-0.5">฿${cur.exp.toLocaleString('th-TH', {minimumFractionDigits: 0})}</div>
+            <div class="text-[9px] text-gray-500 mt-1 leading-tight">${pct(cur.exp, prv.exp)}</div>
           </div>
-          <div class="bg-brand-50 dark:bg-brand-900/20 rounded-xl p-3 text-center">
-            <div class="text-[10px] text-brand-700">กำไร</div>
-            <div class="text-sm font-bold ${cur.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}">฿${cur.net.toLocaleString('th-TH', {minimumFractionDigits:0})}</div>
-            <div class="text-[10px] text-gray-500">${pct(cur.net, prv.net)}</div>
+          <div class="bg-orange-50 dark:bg-orange-900/20 rounded-xl px-1.5 py-2.5 text-center">
+            <div class="text-[10px] font-semibold text-orange-800 dark:text-orange-300">กำไรสุทธิ</div>
+            <div class="text-sm font-bold ${cur.net >= 0 ? 'text-emerald-700' : 'text-rose-700'} leading-tight mt-0.5">฿${cur.net.toLocaleString('th-TH', {minimumFractionDigits: 0})}</div>
+            <div class="text-[9px] text-gray-500 mt-1 leading-tight">${pct(cur.net, prv.net)}</div>
+            ${margin !== null ? `<div class="text-[9px] font-semibold mt-0.5 ${margin >= 0 ? 'text-emerald-600' : 'text-rose-600'}">${margin.toFixed(1)}% ของรายรับ</div>` : ''}
           </div>
         </div>
-        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-xl p-3">
-          <div class="font-bold text-gray-700 dark:text-gray-200 mb-2">หมวดที่ใช้เยอะสุด (เดือนนี้)</div>
-          ${cur.topCats.length ? cur.topCats.map(([name, val], i) => `
-            <div class="flex justify-between py-1 border-b border-gray-100 dark:border-gray-600 last:border-0">
-              <span>${i + 1}. ${escapeHTML(name)}</span>
-              <span class="font-semibold">฿${val.toLocaleString('th-TH', {minimumFractionDigits:0})}</span>
-            </div>`).join('') : '<div class="text-gray-400">ยังไม่มีข้อมูล</div>'}
+        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-xl px-3 py-2 flex-1 min-h-0 overflow-hidden flex flex-col">
+          <div class="text-xs font-bold text-gray-800 dark:text-gray-100 mb-1.5 shrink-0">หมวดที่ใช้เยอะสุด</div>
+          <div class="flex-1 min-h-0 overflow-hidden">
+            ${cur.topCats.length ? cur.topCats.map(([name, val], i) => `
+              <div class="flex justify-between items-center py-1 border-b border-gray-200/80 dark:border-gray-600 last:border-0 gap-2">
+                <span class="text-xs text-gray-700 dark:text-gray-200 truncate">${i + 1}. ${escapeHTML(name)}</span>
+                <span class="text-xs font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">฿${val.toLocaleString('th-TH', {minimumFractionDigits: 0})}</span>
+              </div>`).join('') : '<div class="text-xs text-gray-400 py-1">ยังไม่มีข้อมูลในเดือนนี้</div>'}
+          </div>
         </div>
-        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-xl p-3 text-[11px] text-gray-600 dark:text-gray-300">
-          <div class="font-bold mb-1">เดือนก่อน (${prevName})</div>
-          <div>รายรับ ฿${prv.inc.toLocaleString('th-TH')} · รายจ่าย ฿${prv.exp.toLocaleString('th-TH')} · กำไร ฿${prv.net.toLocaleString('th-TH')}</div>
+        <div class="bg-gray-50 dark:bg-gray-700/40 rounded-xl px-3 py-2 text-xs text-gray-700 dark:text-gray-200 shrink-0">
+          <div class="font-bold text-gray-800 dark:text-gray-100 mb-1">เดือนก่อน — ${prevName}</div>
+          <div class="flex flex-wrap gap-x-3 gap-y-0.5 leading-snug">
+            <span>รับ <b>฿${prv.inc.toLocaleString('th-TH', {minimumFractionDigits: 0})}</b></span>
+            <span>จ่าย <b>฿${prv.exp.toLocaleString('th-TH', {minimumFractionDigits: 0})}</b></span>
+            <span>กำไร <b class="${prv.net >= 0 ? 'text-emerald-700' : 'text-rose-700'}">฿${prv.net.toLocaleString('th-TH', {minimumFractionDigits: 0})}</b></span>
+          </div>
         </div>
       `;
-      document.getElementById('monthlyReportModal').classList.remove('hidden');
     };
 
     // ----- Daily slip (fullscreen on-screen + print) -----
-    window.printDailySlip = async function() {
-      const today = (typeof getLocalYYYYMMDD === 'function')
+    window.printDailySlip = async function(dateStr) {
+      const fallbackToday = (typeof getLocalYYYYMMDD === 'function')
         ? getLocalYYYYMMDD()
         : window.getLocalYYYYMMDD();
-      // Prefer IDB for today so slip is complete even if memory only has a filter range
-      let txs = (window.appData.transactions || []).filter(t => t.date === today);
+      const day = (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) ? dateStr : fallbackToday;
+      // Prefer IDB for the selected day so slip is complete even if memory only has a filter range
+      let txs = (window.appData.transactions || []).filter(t => t.date === day);
       try {
         if (window.SomtumStore && SomtumStore.getTxByDateRange) {
-          const fromIdb = await SomtumStore.getTxByDateRange(today, today);
+          const fromIdb = await SomtumStore.getTxByDateRange(day, day);
           if (fromIdb && fromIdb.length) txs = fromIdb;
         }
       } catch (e) { console.warn('printDailySlip IDB', e); }
@@ -2249,9 +2983,9 @@
       const marginColor = marginPct >= 0 ? '#047857' : '#be123c';
 
       // Thai date label
-      let dateLabel = today;
+      let dateLabel = day;
       try {
-        const parts = today.split('-');
+        const parts = day.split('-');
         if (parts.length === 3) {
           const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
           dateLabel = d.toLocaleDateString('th-TH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -2270,11 +3004,15 @@
 <div class="ds-backdrop">
   <div class="ds-sheet">
     <div class="ds-header">
-      <div class="ds-title">ใบสรุปยอดวันนี้</div>
+      <div class="ds-title">ใบสรุปยอดรายวัน</div>
       <button type="button" class="ds-close" aria-label="ปิด">&times;</button>
     </div>
+    <div class="ds-date-bar no-print">
+      <label class="ds-date-label">เลือกวันที่</label>
+      <input type="date" id="dailySlipDateInput" value="${day}" class="ds-date-input">
+    </div>
     <div class="ds-body" id="dailySlipPrintArea">
-      <div class="ds-brand">ส้มตำนายหนึ่ง</div>
+      <div class="ds-brand">STone</div>
       <div class="ds-date">${dateLabel}</div>
       <div class="ds-card ds-inc">
         <div class="ds-label">รายรับ</div>
@@ -2312,6 +3050,9 @@
 #dailySlipOverlay .ds-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #eee;flex-shrink:0;background:linear-gradient(90deg,#ea580c,#f59e0b);color:#fff}
 #dailySlipOverlay .ds-title{font-weight:700;font-size:clamp(15px,4.2vw,17px)}
 #dailySlipOverlay .ds-close{background:transparent;border:0;color:#fff;font-size:28px;line-height:1;cursor:pointer;padding:0 6px}
+#dailySlipOverlay .ds-date-bar{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #eee;background:#fff7ed;flex-shrink:0}
+#dailySlipOverlay .ds-date-label{font-size:13px;font-weight:600;color:#9a3412;white-space:nowrap}
+#dailySlipOverlay .ds-date-input{flex:1;font-size:14px;padding:8px 10px;border:1px solid #fdba74;border-radius:12px;background:#fff;color:#111;font-family:inherit}
 #dailySlipOverlay .ds-body{flex:1;overflow:auto;padding:clamp(16px,4vw,24px);text-align:center;-webkit-overflow-scrolling:touch}
 #dailySlipOverlay .ds-brand{font-size:clamp(22px,6.5vw,28px);font-weight:800;color:#111;margin:4px 0 6px}
 #dailySlipOverlay .ds-date{font-size:clamp(13px,3.6vw,15px);color:#555;margin-bottom:clamp(14px,3vw,20px)}
@@ -2336,7 +3077,7 @@
   #dailySlipOverlay{position:static}
   #dailySlipOverlay .ds-backdrop{background:#fff;padding:0}
   #dailySlipOverlay .ds-sheet{box-shadow:none;max-width:100%;height:auto;max-height:none;border-radius:0}
-  #dailySlipOverlay .ds-header,#dailySlipOverlay .ds-actions,#dailySlipOverlay .ds-close{display:none!important}
+  #dailySlipOverlay .ds-header,#dailySlipOverlay .ds-actions,#dailySlipOverlay .ds-close,#dailySlipOverlay .ds-date-bar,.no-print{display:none!important}
   #dailySlipOverlay .ds-body{padding:12mm}
   #dailySlipOverlay .ds-amt{font-size:28pt}
 }
@@ -2360,6 +3101,15 @@
       overlay.querySelector('.ds-btn-print').addEventListener('click', () => {
         window.print();
       });
+      const dateInput = overlay.querySelector('#dailySlipDateInput');
+      if (dateInput) {
+        dateInput.addEventListener('change', () => {
+          const v = dateInput.value;
+          if (v && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+            window.printDailySlip(v);
+          }
+        });
+      }
     };
 
     // ----- Weekly backup reminder -----
@@ -2371,7 +3121,14 @@
       const week = 7 * 24 * 60 * 60 * 1000;
       if (Date.now() - last > week) {
         const modal = document.getElementById('backupRemindModal');
-        if (modal) setTimeout(() => modal.classList.remove('hidden'), 2500);
+        if (modal) {
+          // Don't clash with guestMergeModal (same z-index)
+          setTimeout(() => {
+            const guestModal = document.getElementById('guestMergeModal');
+            if (guestModal && !guestModal.classList.contains('hidden')) return;
+            modal.classList.remove('hidden');
+          }, 2500);
+        }
       }
     };
     // Hook after finish loading
