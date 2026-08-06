@@ -582,11 +582,14 @@ const firebaseConfig = {
 
       const txCollRef = collection(db, "users", window.currentUser.uid, "transactions");
       window.unsubTransactions = onSnapshot(txCollRef, async (querySnap) => {
-        // Skip applying remote txs while a local write is in flight (race protection)
+        // Skip applying remote txs while a local write is in flight (race protection).
+        // Mark deferred so UI can refresh from local/IDB after the write finishes.
         if (window._pendingTxSync && window._pendingTxSync > 0) {
+          window._txSnapshotDeferred = true;
           console.info('[STone] skip tx snapshot while local write pending', window._pendingTxSync);
           return;
         }
+        window._txSnapshotDeferred = false;
 
         const txs = [];
         querySnap.forEach((d) => { txs.push(d.data()); });
@@ -1019,6 +1022,8 @@ const firebaseConfig = {
         clean.amount = Number(clean.amount);
         const txRef = doc(db, "users", window.currentUser.uid, "transactions", clean.id);
         await setDoc(txRef, clean);
+        // Keep dirty until we know local UI/IDB still has the row; clearing immediately
+        // is fine for cloud truth, but only after ensuring the row is in IDB (caller putTx).
         if (SomtumStore.clearDirty) await SomtumStore.clearDirty([clean.id]);
         if (navigator.onLine) {
           window.updateSyncUI(true);
@@ -1033,6 +1038,24 @@ const firebaseConfig = {
         throw e;
       } finally {
         window._pendingTxSync = Math.max(0, (window._pendingTxSync || 1) - 1);
+        // Snapshot may have been skipped while pending — refresh UI from local/IDB now
+        if (window._txSnapshotDeferred || true) {
+          window._txSnapshotDeferred = false;
+          try {
+            // Ensure this tx stays visible in memory even if range reload races
+            if (txObj && txObj.id && window.appData && Array.isArray(window.appData.transactions)) {
+              const id = String(txObj.id);
+              const idx = window.appData.transactions.findIndex(function(t) { return t && String(t.id) === id; });
+              if (idx > -1) window.appData.transactions[idx] = txObj;
+              else window.appData.transactions.push(txObj);
+            }
+            if (typeof window.refreshDashboard === 'function') {
+              await window.refreshDashboard();
+            }
+          } catch (uiErr) {
+            console.warn('[STone] post-save UI refresh', uiErr);
+          }
+        }
       }
     };
 

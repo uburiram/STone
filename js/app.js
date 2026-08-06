@@ -379,7 +379,31 @@
       try {
         // null,null => getAll via openCursor (see storage.getTxByDateRange)
         const list = await SomtumStore.getTxByDateRange(start, end);
-        window.appData.transactions = list || [];
+        let merged = list || [];
+        // Preserve in-memory txs that are still dirty (just saved / offline) and missing
+        // from this IDB range read — prevents UI flash-empty right after save while logged in.
+        try {
+          const dirtyIds = SomtumStore.getDirtyIds ? await SomtumStore.getDirtyIds() : [];
+          if (dirtyIds && dirtyIds.length) {
+            const have = new Set(merged.map(function(t) { return t && t.id ? String(t.id) : ''; }));
+            const mem = (window.appData && window.appData.transactions) || [];
+            for (let i = 0; i < dirtyIds.length; i++) {
+              const id = String(dirtyIds[i]);
+              if (have.has(id)) continue;
+              let tx = mem.find(function(t) { return t && String(t.id) === id; });
+              if (!tx && SomtumStore.getTx) tx = await SomtumStore.getTx(id);
+              if (!tx || !tx.date) continue;
+              // Only include if within requested range (or unbounded)
+              if (start && tx.date < start) continue;
+              if (end && tx.date > end) continue;
+              merged.push(tx);
+              have.add(id);
+            }
+          }
+        } catch (mergeErr) {
+          console.warn('ensureTransactionsLoaded dirty merge', mergeErr);
+        }
+        window.appData.transactions = merged;
         window.__loadedRange = { start: start, end: end };
         window.__txCacheLoaded = true;
       } catch (e) {
@@ -1433,6 +1457,17 @@
 
       closeTransactionModal();
 
+      // Update UI immediately from in-memory + IDB data (do not wait for cloud snapshot).
+      // When logged in, onSnapshot may be skipped during _pendingTxSync — without this
+      // the new row only appears after a full page refresh.
+      try {
+        if (typeof window.refreshDashboard === 'function') {
+          await window.refreshDashboard();
+        }
+      } catch (uiErr) {
+        console.warn('refreshDashboard after save', uiErr);
+      }
+
       // Then try cloud (incremental — single doc)
       try {
         await window.saveTransactionToFirestore(txObj);
@@ -1441,6 +1476,13 @@
         console.error(err);
         window.showToast('บันทึกลงเครื่องแล้ว แต่ซิงค์ Cloud ล้มเหลว', 'error');
       }
+
+      // Refresh again after cloud write settles (snapshot may have been skipped while pending)
+      try {
+        if (typeof window.refreshDashboard === 'function') {
+          await window.refreshDashboard();
+        }
+      } catch (uiErr2) { /* */ }
 
       if(!document.getElementById('calendarDayModal').classList.contains('hidden')) {
         openCalendarDayModal(selectedCalendarDay);
