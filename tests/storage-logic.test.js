@@ -95,5 +95,49 @@ const MAX = 400000;
 assert(MAX === 400000, 'LS_APPDATA_MAX_CHARS = 400000');
 assert('x'.repeat(500000).length > MAX, 'large blob exceeds cap');
 
+// Mirror of migrateFromLegacy import decision (must not re-import after intentional clear)
+function shouldImportLegacy(migrated, existingCount, bestN) {
+  if (migrated && existingCount === 0) return false; // intentional clear
+  if (!migrated || bestN > existingCount) return true;
+  return false;
+}
+
+console.log('=== migrateAfterClear guard ===');
+assert(shouldImportLegacy(true, 0, 5) === false, 'migrated+empty → skip legacy (clear)');
+assert(shouldImportLegacy(false, 0, 5) === true, 'first migrate → import');
+assert(shouldImportLegacy(true, 2, 10) === true, 'legacy richer → merge');
+assert(shouldImportLegacy(true, 10, 2) === false, 'local richer → keep');
+
+// Mirror of applyCloudTxSnapshot prune decision
+function shouldPruneLocal(id, cloudIds, dirtyIds, deletedIds) {
+  if (cloudIds.has(id)) return false;
+  if (dirtyIds.has(id)) return false; // keep unsynced local work
+  return true; // prune stale (including already-deleted queue)
+}
+
+console.log('=== cloud snapshot prune safety ===');
+const cloud = new Set(['a', 'b']);
+const dirty = new Set(['c']); // local-only unsynced
+const deleted = new Set(['d']);
+assert(shouldPruneLocal('a', cloud, dirty, deleted) === false, 'on cloud → keep');
+assert(shouldPruneLocal('c', cloud, dirty, deleted) === false, 'dirty local → keep');
+assert(shouldPruneLocal('d', cloud, dirty, deleted) === true, 'not cloud not dirty → prune');
+assert(shouldPruneLocal('x', cloud, dirty, deleted) === true, 'orphan → prune');
+
+// Soft sync: only clear successfully uploaded ids
+function clearDirtyAfterUpload(dirtyIds, uploadedIds) {
+  const up = new Set(uploadedIds.map(String));
+  return dirtyIds.filter((id) => !up.has(String(id)));
+}
+console.log('=== clearDirty partial success ===');
+assert(
+  JSON.stringify(clearDirtyAfterUpload(['1', '2', '3'], ['1', '3'])) === JSON.stringify(['2']),
+  'missing upload stays dirty'
+);
+assert(
+  JSON.stringify(clearDirtyAfterUpload(['1'], [])) === JSON.stringify(['1']),
+  'all failed → all remain dirty'
+);
+
 console.log('\nResult:', passed, 'passed,', failed, 'failed');
 process.exit(failed ? 1 : 0);
