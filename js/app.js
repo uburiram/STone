@@ -2478,7 +2478,7 @@
         "ข้อมูลรายรับ-รายจ่าย หมวดหมู่ และเป้าหมายทั้งหมดจะถูกลบทั้งในเครื่องและบน Cloud (ถ้าล็อกอินอยู่) การกระทำนี้ไม่สามารถย้อนกลับได้",
         async () => {
           window.showToast("กำลังล้างข้อมูล...");
-          // Clear IndexedDB tx + meta stores + LS keys completely
+          // Clear IndexedDB tx + meta + kv + legacy sources completely
           if (window.SomtumStore && SomtumStore.clearAllUserData) {
             try {
               await SomtumStore.clearAllUserData();
@@ -2494,7 +2494,19 @@
             customGoal: null,
             customGoalPercent: null
           };
-          // Persist empty meta (categories defaults) without re-seeding old txs
+          window.__txCacheLoaded = false;
+          window.__loadedRange = { start: null, end: null };
+          // Persist empty meta (defaults only) so IDB is not left empty for migrate to refill
+          try {
+            if (window.SomtumStore && SomtumStore.persistAppState) {
+              await SomtumStore.persistAppState(window.appData, { writeAllTx: true });
+            }
+            if (window.SomtumStore && typeof SomtumStore.flush === 'function') {
+              await SomtumStore.flush();
+            }
+          } catch (e) {
+            console.error('persist empty state after clear failed', e);
+          }
           window.saveLocalOnly();
           if (typeof lastAutoBackupHash !== 'undefined') lastAutoBackupHash = '';
 

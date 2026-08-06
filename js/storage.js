@@ -295,7 +295,13 @@
       try {
         const parsed = JSON.parse(best.raw);
         const bestN = Array.isArray(parsed.transactions) ? parsed.transactions.length : 0;
-        if (!migrated || existingCount === 0 || bestN > existingCount) {
+        // Import rules:
+        //  - never migrated → import (first-time upgrade)
+        //  - already migrated + empty IDB → skip (deliberate clearAllUserData)
+        //  - already migrated + legacy strictly richer than non-empty IDB → merge
+        if (migrated && existingCount === 0) {
+          console.info('[STone] v2 already migrated & empty — skip legacy re-import (intentional clear)');
+        } else if (!migrated || bestN > existingCount) {
           const result = await importLegacyObject(parsed);
           console.info('[STone] migrated/merged from', best.src, 'tx=', result.tx, 'idbBefore=', existingCount, 'legacyN=', bestN);
         } else {
@@ -681,6 +687,8 @@
     /**
      * Wipe all app data from the ACTIVE scope only (IDB + scoped LS keys).
      * Keeps UI prefs like dark mode. Does not touch other accounts' DBs.
+     * For guest scope also removes legacy sources (somtum-idb-v1 + residual LS)
+     * so migrateFromLegacy cannot re-import old data after a deliberate clear.
      */
     async clearAllUserData() {
       txCountCache = null;
@@ -697,12 +705,21 @@
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error);
         });
+        // Also clear KV store so no residual somtumAppData / flags remain in IDB
+        try {
+          await new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE_KV, 'readwrite');
+            tx.objectStore(STORE_KV).clear();
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+          });
+        } catch (e) { /* */ }
       }
       const wipeKeys = [
         'somtumAppData', 'somtumHasUnsyncedData', 'somtumLastSyncedTimestamp',
         'somtumDataOwnerUid', 'somtumAutoBackup', 'somtumAutoBackupTime',
         'somtumAutoBackupUid', 'somtumLastGoalNotified', 'somtumLastBackupRemind',
-        FLAG_DIRTY, FLAG_DELETED, FLAG_META_DIRTY, '__seed_dirty_v2'
+        FLAG_DIRTY, FLAG_DELETED, FLAG_META_DIRTY, '__seed_dirty_v2', '__need_seed_dirty'
       ];
       for (const k of wipeKeys) {
         delete memoryKv[k];
@@ -711,8 +728,43 @@
           try { await kvDel(k); } catch (e) { /* */ }
         }
       }
+
+      // Guest: purge legacy sources that migrateFromLegacy would otherwise re-import
+      if (activeScope === 'guest') {
+        try {
+          const toRemove = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.indexOf('somtum') === 0 &&
+                !GLOBAL_LS_KEYS.has(k) &&
+                k.indexOf('somtum@') !== 0) {
+              toRemove.push(k);
+            }
+          }
+          toRemove.forEach((k) => {
+            try { localStorage.removeItem(k); } catch (e) { /* */ }
+          });
+        } catch (e) { /* */ }
+
+        try {
+          await new Promise((resolve) => {
+            const req = indexedDB.deleteDatabase('somtum-idb-v1');
+            req.onsuccess = () => resolve();
+            req.onerror = () => resolve();
+            req.onblocked = () => resolve();
+          });
+          console.info('[STone] deleted legacy DB somtum-idb-v1');
+        } catch (e) {
+          console.warn('[STone] delete somtum-idb-v1 failed', e);
+        }
+      }
+
+      // Re-mark migrated so next init does not treat empty DB as "never migrated"
       await kvSet(FLAG_MIGRATED, new Date().toISOString());
       memoryKv[FLAG_MIGRATED] = await kvGet(FLAG_MIGRATED);
+      // Prevent seedDirty from treating empty as needing seed from nowhere
+      memoryKv['__seed_dirty_v2'] = '1';
+      try { await kvSet('__seed_dirty_v2', '1'); } catch (e) { /* */ }
     },
 
     async seedDirtyIfNeeded() {
