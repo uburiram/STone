@@ -439,12 +439,22 @@ const firebaseConfig = {
         window.appData.equipments = mergedEquipments;
         window.appData.customGoal = mergedGoal;
 
-        const localTx = pendingGuestData.transactions || [];
+        // Sanitize + filter so every doc passes Firestore rules (no data loss of valid rows)
+        const sanitizedGuest = window.sanitizeAppData
+          ? window.sanitizeAppData({ transactions: pendingGuestData.transactions || [], categories: pendingGuestData.categories })
+          : { transactions: pendingGuestData.transactions || [] };
+        const localTx = (sanitizedGuest.transactions || []).filter(function(tx) {
+          return tx && tx.id && (tx.type === 'income' || tx.type === 'expense') &&
+            tx.date && Number(tx.amount) > 0;
+        });
         let batch = writeBatch(db);
         let count = 0;
         for (const tx of localTx) {
-          const txRef = doc(db, "users", window.currentUser.uid, "transactions", tx.id);
-          batch.set(txRef, tx, { merge: true });
+          const clean = JSON.parse(JSON.stringify(tx));
+          clean.id = String(clean.id);
+          clean.amount = Number(clean.amount);
+          const txRef = doc(db, "users", window.currentUser.uid, "transactions", clean.id);
+          batch.set(txRef, clean, { merge: true });
           count++;
           if (count >= 400) { await batch.commit(); batch = writeBatch(db); count = 0; }
         }
@@ -484,9 +494,19 @@ const firebaseConfig = {
 
         batch = writeBatch(db);
         count = 0;
-        for (const tx of (pendingGuestData.transactions || [])) {
-          const txRef = doc(db, "users", window.currentUser.uid, "transactions", tx.id);
-          batch.set(txRef, tx);
+        const sanitizedLocal = window.sanitizeAppData
+          ? window.sanitizeAppData({ transactions: pendingGuestData.transactions || [], categories: pendingGuestData.categories })
+          : { transactions: pendingGuestData.transactions || [] };
+        const localOnlyTx = (sanitizedLocal.transactions || []).filter(function(tx) {
+          return tx && tx.id && (tx.type === 'income' || tx.type === 'expense') &&
+            tx.date && Number(tx.amount) > 0;
+        });
+        for (const tx of localOnlyTx) {
+          const clean = JSON.parse(JSON.stringify(tx));
+          clean.id = String(clean.id);
+          clean.amount = Number(clean.amount);
+          const txRef = doc(db, "users", window.currentUser.uid, "transactions", clean.id);
+          batch.set(txRef, clean);
           count++;
           if (count >= 400) { await batch.commit(); batch = writeBatch(db); count = 0; }
         }
@@ -562,16 +582,72 @@ const firebaseConfig = {
 
       const txCollRef = collection(db, "users", window.currentUser.uid, "transactions");
       window.unsubTransactions = onSnapshot(txCollRef, async (querySnap) => {
+        // Skip applying remote txs while a local write is in flight (race protection)
+        if (window._pendingTxSync && window._pendingTxSync > 0) {
+          console.info('[STone] skip tx snapshot while local write pending', window._pendingTxSync);
+          return;
+        }
+
         const txs = [];
         querySnap.forEach((d) => { txs.push(d.data()); });
-        // Persist cloud snapshot into structured IDB (per-tx), then load current filter range
-        if (SomtumStore.persistAppState) {
-          const tmp = window.sanitizeAppData(Object.assign({}, window.appData, { transactions: txs }));
-          await SomtumStore.persistAppState(tmp, { writeAllTx: true });
+
+        // Safe apply: upsert cloud + prune local orphans, but KEEP dirty (unsynced) local txs
+        try {
+          if (SomtumStore.applyCloudTxSnapshot) {
+            const stats = await SomtumStore.applyCloudTxSnapshot(txs);
+            if (stats && (stats.pruned || stats.keptLocalDirty)) {
+              console.info('[STone] cloud snapshot applied', stats);
+            }
+          } else if (SomtumStore.persistAppState) {
+            const tmp = window.sanitizeAppData(Object.assign({}, window.appData, { transactions: txs }));
+            await SomtumStore.persistAppState(tmp, { writeAllTx: true });
+          }
+        } catch (e) {
+          console.error('[STone] applyCloudTxSnapshot failed', e);
         }
-        window.appData = window.sanitizeAppData(Object.assign({}, window.appData, { transactions: txs }));
+
+        // Merge for UI: cloud txs + any remaining local-dirty that are not on cloud yet
+        let merged = txs.slice();
+        try {
+          const dirtyIds = SomtumStore.getDirtyIds ? await SomtumStore.getDirtyIds() : [];
+          if (dirtyIds && dirtyIds.length) {
+            const cloudIdSet = new Set(txs.map(function(t) { return t && t.id ? String(t.id) : ''; }));
+            for (let i = 0; i < dirtyIds.length; i++) {
+              const id = String(dirtyIds[i]);
+              if (cloudIdSet.has(id)) continue;
+              let localTx = null;
+              if (SomtumStore.getTx) localTx = await SomtumStore.getTx(id);
+              if (!localTx && window.appData && Array.isArray(window.appData.transactions)) {
+                localTx = window.appData.transactions.find(function(t) { return t && String(t.id) === id; });
+              }
+              if (localTx) merged.push(localTx);
+            }
+          }
+        } catch (mergeErr) {
+          console.warn('[STone] dirty merge into snapshot failed', mergeErr);
+        }
+
+        window.appData = window.sanitizeAppData(Object.assign({}, window.appData, { transactions: merged }));
         if (typeof window.ensureTransactionsLoaded === 'function') {
+          // Prefer memory we just set; force reload only if store is authoritative after prune
+          window.__txCacheLoaded = false;
           await window.ensureTransactionsLoaded(true);
+          // Re-merge dirty that might only be in memory after range load
+          try {
+            const dirtyIds2 = SomtumStore.getDirtyIds ? await SomtumStore.getDirtyIds() : [];
+            if (dirtyIds2 && dirtyIds2.length) {
+              const have = new Set((window.appData.transactions || []).map(function(t) { return t && t.id ? String(t.id) : ''; }));
+              for (let i = 0; i < dirtyIds2.length; i++) {
+                const id = String(dirtyIds2[i]);
+                if (have.has(id)) continue;
+                const localTx = SomtumStore.getTx ? await SomtumStore.getTx(id) : null;
+                if (localTx) {
+                  window.appData.transactions.push(localTx);
+                  have.add(id);
+                }
+              }
+            }
+          } catch (e2) { /* */ }
         }
         window.saveLocalOnly();
         window.refreshDashboard();
@@ -656,35 +732,62 @@ const firebaseConfig = {
         return;
       }
 
+      const uploadedIds = [];
+      const deletedOkIds = [];
       let batch = writeBatch(db);
       let count = 0;
-      for (const id of dirtyIds) {
-        let tx = (window.appData.transactions || []).find(t => t.id === id);
-        if (!tx && SomtumStore.getTx) tx = await SomtumStore.getTx(id);
-        if (!tx) continue;
-        const txRef = doc(db, "users", window.currentUser.uid, "transactions", id);
-        batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
-        count++;
-        if (count >= 400) {
-          await batch.commit();
-          batch = writeBatch(db);
-          count = 0;
+      let pendingOps = [];
+
+      const flushBatch = async () => {
+        if (count === 0) return;
+        await batch.commit();
+        // Only after successful commit, record ids from this batch
+        for (let i = 0; i < pendingOps.length; i++) {
+          const op = pendingOps[i];
+          if (op.kind === 'set') uploadedIds.push(op.id);
+          else if (op.kind === 'del') deletedOkIds.push(op.id);
         }
+        pendingOps = [];
+        batch = writeBatch(db);
+        count = 0;
+      };
+
+      for (const id of dirtyIds) {
+        let tx = (window.appData.transactions || []).find(t => t && String(t.id) === String(id));
+        if (!tx && SomtumStore.getTx) tx = await SomtumStore.getTx(id);
+        if (!tx) {
+          // Cannot upload — leave in dirty queue (do NOT clear)
+          console.warn('[STone] soft sync skip missing dirty tx', id);
+          continue;
+        }
+        // Must pass Firestore rules (amount > 0, type, id)
+        const amount = Number(tx.amount);
+        if (!tx.id || !tx.type || !tx.date || !(amount > 0) ||
+            (tx.type !== 'income' && tx.type !== 'expense')) {
+          console.warn('[STone] soft sync skip invalid tx for rules', id, tx);
+          continue;
+        }
+        const clean = JSON.parse(JSON.stringify(tx));
+        clean.id = String(clean.id);
+        clean.amount = amount;
+        const txRef = doc(db, "users", window.currentUser.uid, "transactions", String(id));
+        batch.set(txRef, clean, { merge: true });
+        pendingOps.push({ kind: 'set', id: String(id) });
+        count++;
+        if (count >= 400) await flushBatch();
       }
       for (const id of deletedIds) {
-        const txRef = doc(db, "users", window.currentUser.uid, "transactions", id);
+        const txRef = doc(db, "users", window.currentUser.uid, "transactions", String(id));
         batch.delete(txRef);
+        pendingOps.push({ kind: 'del', id: String(id) });
         count++;
-        if (count >= 400) {
-          await batch.commit();
-          batch = writeBatch(db);
-          count = 0;
-        }
+        if (count >= 400) await flushBatch();
       }
-      if (count > 0) await batch.commit();
+      await flushBatch();
 
-      if (SomtumStore.clearDirty) await SomtumStore.clearDirty(dirtyIds);
-      if (SomtumStore.clearDeleted) await SomtumStore.clearDeleted(deletedIds);
+      // Clear ONLY ids that were actually committed — never drop failed/missing
+      if (uploadedIds.length && SomtumStore.clearDirty) await SomtumStore.clearDirty(uploadedIds);
+      if (deletedOkIds.length && SomtumStore.clearDeleted) await SomtumStore.clearDeleted(deletedOkIds);
     };
 
     /**
@@ -714,10 +817,20 @@ const firebaseConfig = {
 
         let batch = writeBatch(db);
         let count = 0;
+        const forceUploaded = [];
         for (const tx of allTx) {
           if (!tx || !tx.id) continue;
-          const txRef = doc(db, "users", window.currentUser.uid, "transactions", tx.id);
-          batch.set(txRef, JSON.parse(JSON.stringify(tx)), { merge: true });
+          const amount = Number(tx.amount);
+          if (!(amount > 0) || (tx.type !== 'income' && tx.type !== 'expense') || !tx.date) {
+            console.warn('[STone] force sync skip invalid tx', tx && tx.id);
+            continue;
+          }
+          const clean = JSON.parse(JSON.stringify(tx));
+          clean.id = String(clean.id);
+          clean.amount = amount;
+          const txRef = doc(db, "users", window.currentUser.uid, "transactions", clean.id);
+          batch.set(txRef, clean, { merge: true });
+          forceUploaded.push(clean.id);
           count++;
           if (count >= 400) {
             await batch.commit();
@@ -727,7 +840,7 @@ const firebaseConfig = {
         }
         if (count > 0) await batch.commit();
 
-        const localIds = new Set(allTx.map(t => t.id));
+        const localIds = new Set(forceUploaded);
         const txCollRef = collection(db, "users", window.currentUser.uid, "transactions");
         const snap = await getDocs(txCollRef);
         batch = writeBatch(db);
@@ -747,6 +860,7 @@ const firebaseConfig = {
         }
         if (count > 0) await batch.commit();
 
+        // Clear queues only after successful upload + prune
         if (SomtumStore.clearDirty) await SomtumStore.clearDirty([]);
         if (SomtumStore.clearDeleted) await SomtumStore.clearDeleted([]);
         if (SomtumStore.clearMetaDirty) await SomtumStore.clearMetaDirty();
@@ -815,6 +929,8 @@ const firebaseConfig = {
     let syncTimer = null;
     // Flag to prevent onSnapshot from overwriting local category/settings changes
     window._pendingSettingsSync = false;
+    // Counter: >0 means local tx write in flight — skip applying remote tx snapshot
+    window._pendingTxSync = 0;
 
     window.syncDataToCloud = function(immediate = false) {
       window.saveLocalOnly();
@@ -842,12 +958,29 @@ const firebaseConfig = {
           const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");
           // Offline: Firestore persistentLocalCache queues this write automatically
           await setDoc(settingsRef, payload, { merge: true });
+          if (SomtumStore.clearMetaDirty) {
+            try { await SomtumStore.clearMetaDirty(); } catch (e) { /* */ }
+          }
+          // Also flush any pending dirty/deleted transactions (soft, no prune)
+          try {
+            await window._doSoftSyncToCloud();
+          } catch (txSyncErr) {
+            console.warn('[STone] settings sync ok but tx soft-sync failed', txSyncErr);
+            SomtumStore.setItem('somtumHasUnsyncedData', 'true');
+          }
           window._pendingSettingsSync = false;
-          if (navigator.onLine) {
-            window.updateSyncUI(true);
-          } else {
+          // Reflect remaining dirty state accurately
+          let stillDirty = false;
+          try {
+            const d = SomtumStore.getDirtyIds ? await SomtumStore.getDirtyIds() : [];
+            const del = SomtumStore.getDeletedIds ? await SomtumStore.getDeletedIds() : [];
+            stillDirty = (d && d.length > 0) || (del && del.length > 0);
+          } catch (e) { /* */ }
+          if (stillDirty || !navigator.onLine) {
             SomtumStore.setItem('somtumHasUnsyncedData', 'true');
             window.updateSyncUI(false);
+          } else if (navigator.onLine) {
+            window.updateSyncUI(true);
           }
           if (typeof window.updatePendingSyncButton === 'function') window.updatePendingSyncButton();
         } catch (e) {
@@ -878,11 +1011,15 @@ const firebaseConfig = {
       if (!navigator.onLine) {
         SomtumStore.setItem('somtumHasUnsyncedData', 'true');
       }
+      window._pendingTxSync = (window._pendingTxSync || 0) + 1;
       try {
         // With persistentLocalCache, setDoc queues while offline and syncs later
-        const txRef = doc(db, "users", window.currentUser.uid, "transactions", txObj.id);
-        await setDoc(txRef, JSON.parse(JSON.stringify(txObj)));
-        if (SomtumStore.clearDirty) await SomtumStore.clearDirty([txObj.id]);
+        const clean = JSON.parse(JSON.stringify(txObj));
+        clean.id = String(clean.id);
+        clean.amount = Number(clean.amount);
+        const txRef = doc(db, "users", window.currentUser.uid, "transactions", clean.id);
+        await setDoc(txRef, clean);
+        if (SomtumStore.clearDirty) await SomtumStore.clearDirty([clean.id]);
         if (navigator.onLine) {
           window.updateSyncUI(true);
         } else {
@@ -894,6 +1031,8 @@ const firebaseConfig = {
         SomtumStore.setItem('somtumHasUnsyncedData', 'true');
         window.updateSyncUI(false);
         throw e;
+      } finally {
+        window._pendingTxSync = Math.max(0, (window._pendingTxSync || 1) - 1);
       }
     };
 
@@ -906,10 +1045,12 @@ const firebaseConfig = {
       if (!navigator.onLine) {
         SomtumStore.setItem('somtumHasUnsyncedData', 'true');
       }
+      window._pendingTxSync = (window._pendingTxSync || 0) + 1;
       try {
-        const txRef = doc(db, "users", window.currentUser.uid, "transactions", txId);
+        const id = String(txId);
+        const txRef = doc(db, "users", window.currentUser.uid, "transactions", id);
         await deleteDoc(txRef);
-        if (SomtumStore.clearDeleted) await SomtumStore.clearDeleted([txId]);
+        if (SomtumStore.clearDeleted) await SomtumStore.clearDeleted([id]);
         if (navigator.onLine) {
           window.updateSyncUI(true);
         } else {
@@ -921,6 +1062,8 @@ const firebaseConfig = {
         SomtumStore.setItem('somtumHasUnsyncedData', 'true');
         window.updateSyncUI(false);
         throw e;
+      } finally {
+        window._pendingTxSync = Math.max(0, (window._pendingTxSync || 1) - 1);
       }
     };
 

@@ -459,21 +459,37 @@
         } else {
           await window.ensureTransactionsLoaded(true);
         }
-        // Recovery: if IDB empty but legacy blob exists, force structured import
+        // Recovery: if IDB empty but legacy blob exists, force structured import.
+        // Skip when already migrated and empty (intentional clearAllUserData) so data
+        // does not silently reappear after user wiped it.
         n = SomtumStore.countTx ? await SomtumStore.countTx() : 0;
         if (n === 0) {
-          const raw = SomtumStore.getItem('somtumAppData');
-          if (raw) {
-            try {
-              const parsed = window.sanitizeAppData(JSON.parse(raw));
-              if ((parsed.transactions || []).length > 0 && SomtumStore.persistAppState) {
-                await SomtumStore.persistAppState(parsed, { writeAllTx: true });
-                window.appData = parsed;
-                window.__txCacheLoaded = true;
-                window.__loadedRange = { start: null, end: null };
-                console.info('[hydrate] recovered', parsed.transactions.length, 'txs from legacy blob');
-              }
-            } catch (e2) { console.warn(e2); }
+          let alreadyMigrated = false;
+          try {
+            const mig = SomtumStore.getItem && SomtumStore.getItem('__migrated_v2');
+            alreadyMigrated = !!mig;
+            if (!alreadyMigrated && SomtumStore.getMeta) {
+              // FLAG may live only in IDB kv after clear re-seed
+              const stats = SomtumStore.stats ? await SomtumStore.stats() : null;
+              if (stats && stats.migratedAt) alreadyMigrated = true;
+            }
+          } catch (e) { /* */ }
+          if (alreadyMigrated) {
+            console.info('[hydrate] IDB empty + migrated — skip legacy blob recovery (intentional clear)');
+          } else {
+            const raw = SomtumStore.getItem('somtumAppData');
+            if (raw) {
+              try {
+                const parsed = window.sanitizeAppData(JSON.parse(raw));
+                if ((parsed.transactions || []).length > 0 && SomtumStore.persistAppState) {
+                  await SomtumStore.persistAppState(parsed, { writeAllTx: true });
+                  window.appData = parsed;
+                  window.__txCacheLoaded = true;
+                  window.__loadedRange = { start: null, end: null };
+                  console.info('[hydrate] recovered', parsed.transactions.length, 'txs from legacy blob');
+                }
+              } catch (e2) { console.warn(e2); }
+            }
           }
         }
       } catch (e) {

@@ -669,6 +669,55 @@
       }
     },
 
+    /**
+     * Apply a cloud transaction snapshot safely.
+     * - Upserts every cloud tx into IDB
+     * - Removes local IDB txs that are absent from cloud ONLY when they are not
+     *   pending local upload (dirty) — never drops unsynced local work
+     * - Does not touch other accounts / guest scope
+     * Returns { keptLocalDirty, pruned, upserted }
+     */
+    async applyCloudTxSnapshot(cloudTxs) {
+      const list = Array.isArray(cloudTxs) ? cloudTxs : [];
+      const cloudIds = new Set();
+      let upserted = 0;
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i];
+        if (!t || !t.id) continue;
+        cloudIds.add(String(t.id));
+        await putTxRecord(t);
+        upserted++;
+      }
+
+      const dirty = new Set((await getDirtyIds()).map(String));
+      const deleted = new Set((await getDeletedIds()).map(String));
+      const localAll = await this.getAllTx();
+      let pruned = 0;
+      let keptLocalDirty = 0;
+      for (let i = 0; i < localAll.length; i++) {
+        const t = localAll[i];
+        if (!t || !t.id) continue;
+        const id = String(t.id);
+        if (cloudIds.has(id)) continue;
+        if (dirty.has(id)) {
+          // Local edit/create not yet confirmed on cloud — keep
+          keptLocalDirty++;
+          continue;
+        }
+        if (deleted.has(id)) {
+          // Already queued for delete; ensure record is gone
+          await deleteTxRecord(id);
+          pruned++;
+          continue;
+        }
+        // Present only locally and not dirty → stale after remote delete / other device
+        await deleteTxRecord(id);
+        pruned++;
+      }
+      txCountCache = null;
+      return { keptLocalDirty, pruned, upserted };
+    },
+
     async buildLegacyAppData(base) {
       const meta = (await getMeta()) || {};
       const txs = await this.getAllTx();
