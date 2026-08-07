@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>STone Admin — สถิติเครื่อง</title>
+  <link rel="icon" href="./favicon-32.png" />
+  <style>
+    :root { font-family: system-ui, "Segoe UI", sans-serif; color: #1f2937; }
+    body { margin: 0; background: #f3f4f6; min-height: 100vh; }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 1.25rem; }
+    .card { background: #fff; border-radius: 1rem; padding: 1rem 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-bottom: 1rem; }
+    h1 { font-size: 1.15rem; margin: 0 0 .25rem; }
+    .muted { color: #6b7280; font-size: .8rem; }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .75rem; }
+    .kpi { background: #f9fafb; border-radius: .75rem; padding: .75rem; }
+    .kpi b { display: block; font-size: 1.35rem; margin-top: .15rem; }
+    button {
+      border: 0; border-radius: .65rem; padding: .55rem 1rem; font-weight: 600; cursor: pointer;
+      background: #ea580c; color: #fff; font-size: .85rem;
+    }
+    button.secondary { background: #e5e7eb; color: #374151; }
+    input[type="password"] {
+      width: 100%; box-sizing: border-box; padding: .6rem .75rem; border-radius: .65rem;
+      border: 1px solid #d1d5db; font-size: .9rem; margin-top: .35rem;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: .75rem; }
+    th, td { text-align: left; padding: .45rem .35rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    th { color: #6b7280; font-weight: 600; }
+    .err { color: #b91c1c; background: #fef2f2; padding: .75rem; border-radius: .5rem; font-size: .85rem; }
+    .tag { display: inline-block; background: #fff7ed; color: #c2410c; border-radius: .35rem; padding: .1rem .35rem; font-size: .7rem; }
+    #gateLogin, #gateDenied, #gatePassword, #panel { display: none; }
+    code { font-size: .75rem; background: #f3f4f6; padding: .1rem .3rem; border-radius: .25rem; }
+    label { font-size: .85rem; font-weight: 600; color: #374151; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>STone Admin — สถิติการใช้งานรายเครื่อง</h1>
+      <p class="muted">นับ <strong>เครื่อง/เบราว์เซอร์</strong> · เฉพาะ <code>uburiram@gmail.com</code> + รหัสผ่านแอดมิน</p>
+    </div>
+
+    <div id="gateLogin" class="card">
+      <p>เข้าสู่ระบบด้วย Google (บัญชีแอดมินเท่านั้น)</p>
+      <button type="button" id="btnLogin">เข้าสู่ระบบ Google</button>
+      <p id="gateLoginMsg" class="muted" style="margin-top:.75rem"></p>
+    </div>
+
+    <div id="gateDenied" class="card">
+      <p class="err">บัญชีนี้ไม่มีสิทธิ์เข้าหน้าแอดมิน</p>
+      <p class="muted">ใช้ได้เฉพาะ <code>uburiram@gmail.com</code></p>
+      <p class="muted" id="deniedWho"></p>
+      <button type="button" class="secondary" id="btnLogoutDenied">ออกจากระบบ</button>
+      <p style="margin-top:1rem"><a href="./">← กลับ STone</a></p>
+    </div>
+
+    <div id="gatePassword" class="card">
+      <p style="color:#047857;font-size:.85rem;margin:0 0 .5rem">ยืนยันบัญชีแอดมินแล้ว — กรุณาใส่รหัสผ่านเพื่อดูสถิติ</p>
+      <label for="adminPass">รหัสผ่านแอดมิน</label>
+      <input type="password" id="adminPass" autocomplete="current-password" placeholder="รหัสผ่าน" />
+      <p id="passMsg" class="muted" style="margin-top:.5rem"></p>
+      <div style="display:flex;gap:.5rem;margin-top:.75rem;flex-wrap:wrap">
+        <button type="button" id="btnUnlock">เข้าสู่ระบบแอดมิน</button>
+        <button type="button" class="secondary" id="btnLogoutPass">ออกจากระบบ Google</button>
+      </div>
+    </div>
+
+    <div id="panel">
+      <div class="card">
+        <div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;justify-content:space-between">
+          <div class="muted" id="adminWho"></div>
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+            <button type="button" class="secondary" id="btnRefresh">รีเฟรช</button>
+            <button type="button" class="secondary" id="btnLock">ล็อกหน้าจอ</button>
+            <button type="button" class="secondary" id="btnLogout">ออกจากระบบ</button>
+          </div>
+        </div>
+        <div class="kpis" style="margin-top:1rem">
+          <div class="kpi">เครื่องทั้งหมด<br /><b id="kpiTotal">—</b></div>
+          <div class="kpi">ใช้งาน 24 ชม.<br /><b id="kpiDay">—</b></div>
+          <div class="kpi">ใช้งาน 7 วัน<br /><b id="kpiWeek">—</b></div>
+          <div class="kpi">ใช้งาน 30 วัน<br /><b id="kpiMonth">—</b></div>
+        </div>
+      </div>
+      <div class="card">
+        <h1 style="font-size:1rem">รายการเครื่อง (ล่าสุดก่อน)</h1>
+        <div style="overflow-x:auto;margin-top:.5rem">
+          <table>
+            <thead>
+              <tr>
+                <th>deviceId</th><th>OS</th><th>เบราว์เซอร์</th><th>IP ล่าสุด</th>
+                <th>PWA</th><th>เห็นครั้งแรก</th><th>ล่าสุด</th><th>ping</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+        <p id="loadMsg" class="muted" style="margin-top:.75rem"></p>
+      </div>
+    </div>
+  </div>
+
+  <script src="./js/admin-config.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import {
+      getAuth, initializeAuth, GoogleAuthProvider, signInWithPopup, signOut,
+      onAuthStateChanged, indexedDBLocalPersistence, browserPopupRedirectResolver
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import {
+      initializeFirestore, persistentLocalCache,
+      collection, getDocs, query, orderBy, limit
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAPWL6-lCNacvrVT3ap1YUAe6emoL74Rj8",
+      authDomain: "stone-3eac7.firebaseapp.com",
+      projectId: "stone-3eac7",
+      storageBucket: "stone-3eac7.firebasestorage.app",
+      messagingSenderId: "987122684250",
+      appId: "1:987122684250:web:b0c73525f863885a2b2363",
+      measurementId: "G-68EG2KRP15"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    let auth;
+    try {
+      auth = initializeAuth(app, {
+        persistence: indexedDBLocalPersistence,
+        popupRedirectResolver: browserPopupRedirectResolver
+      });
+    } catch (e) {
+      auth = getAuth(app);
+    }
+    let db;
+    try {
+      db = initializeFirestore(app, { localCache: persistentLocalCache() });
+    } catch (e) {
+      const { getFirestore } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+      db = getFirestore(app);
+    }
+
+    const cfg = window.STONE_ADMIN_CONFIG || {};
+    const ADMIN_EMAIL = 'uburiram@gmail.com';
+    const COLLECTION = 'deviceHeartbeats';
+    const UNLOCK_SESSION_KEY = 'stoneAdminUnlockedAt';
+    const UNLOCK_TTL_MS = 2 * 60 * 60 * 1000;
+
+    function isAdminUser(user) {
+      if (!user || !user.email) return false;
+      return String(user.email).toLowerCase() === ADMIN_EMAIL;
+    }
+
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function fmt(iso) {
+      if (!iso) return '—';
+      try { return new Date(iso).toLocaleString('th-TH'); } catch (e) { return String(iso); }
+    }
+    async function sha256Hex(text) {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(text)));
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    function isPasswordUnlocked() {
+      try {
+        const at = parseInt(sessionStorage.getItem(UNLOCK_SESSION_KEY) || '0', 10);
+        return at && (Date.now() - at < UNLOCK_TTL_MS);
+      } catch (e) { return false; }
+    }
+    function setPasswordUnlocked(on) {
+      try {
+        if (on) sessionStorage.setItem(UNLOCK_SESSION_KEY, String(Date.now()));
+        else sessionStorage.removeItem(UNLOCK_SESSION_KEY);
+      } catch (e) {}
+    }
+    function showOnly(id) {
+      ['gateLogin', 'gateDenied', 'gatePassword', 'panel'].forEach(function (x) {
+        const el = document.getElementById(x);
+        if (el) el.style.display = (x === id) ? 'block' : 'none';
+      });
+    }
+
+    async function loadStats() {
+      const tbody = document.getElementById('tbody');
+      const loadMsg = document.getElementById('loadMsg');
+      loadMsg.textContent = 'กำลังโหลด...';
+      tbody.innerHTML = '';
+      try {
+        const col = collection(db, COLLECTION);
+        let snap;
+        try {
+          snap = await getDocs(query(col, orderBy('lastSeen', 'desc'), limit(2000)));
+        } catch (e) {
+          snap = await getDocs(col);
+        }
+        const rows = [];
+        snap.forEach(d => rows.push(Object.assign({ id: d.id }, d.data())));
+        rows.sort((a, b) => String(b.lastSeen || '').localeCompare(String(a.lastSeen || '')));
+        const now = Date.now();
+        let c1 = 0, c7 = 0, c30 = 0;
+        rows.forEach(r => {
+          const t = r.lastSeen ? new Date(r.lastSeen).getTime() : 0;
+          if (t >= now - 86400000) c1++;
+          if (t >= now - 7 * 86400000) c7++;
+          if (t >= now - 30 * 86400000) c30++;
+        });
+        document.getElementById('kpiTotal').textContent = String(rows.length);
+        document.getElementById('kpiDay').textContent = String(c1);
+        document.getElementById('kpiWeek').textContent = String(c7);
+        document.getElementById('kpiMonth').textContent = String(c30);
+        tbody.innerHTML = rows.map(r => '<tr>' +
+          '<td><code>' + esc(String(r.deviceId || r.id).slice(0, 12)) + '…</code></td>' +
+          '<td>' + esc(r.os || '—') + '</td>' +
+          '<td>' + esc(r.browser || '—') + '</td>' +
+          '<td>' + esc(r.lastIp || '—') + '</td>' +
+          '<td>' + (r.isPwa ? '<span class="tag">PWA</span>' : '—') + '</td>' +
+          '<td>' + esc(fmt(r.firstSeen)) + '</td>' +
+          '<td>' + esc(fmt(r.lastSeen)) + '</td>' +
+          '<td>' + esc(r.pingCount != null ? r.pingCount : '—') + '</td>' +
+          '</tr>').join('') || '<tr><td colspan="8">ยังไม่มีข้อมูลเครื่อง</td></tr>';
+        loadMsg.textContent = 'รวม ' + rows.length + ' เครื่อง';
+      } catch (e) {
+        console.error(e);
+        loadMsg.innerHTML = '<span class="err">โหลดไม่สำเร็จ: ' + esc(e.message || e) +
+          ' — ตรวจว่า deploy firestore.rules แล้ว</span>';
+      }
+    }
+
+    async function routeUser(user) {
+      if (!user) {
+        setPasswordUnlocked(false);
+        showOnly('gateLogin');
+        return;
+      }
+      if (!isAdminUser(user)) {
+        setPasswordUnlocked(false);
+        document.getElementById('deniedWho').innerHTML =
+          'เข้าสู่ระบบด้วย: <code>' + esc(user.email || user.uid) + '</code>';
+        showOnly('gateDenied');
+        return;
+      }
+      if (!isPasswordUnlocked()) {
+        showOnly('gatePassword');
+        document.getElementById('adminPass').value = '';
+        document.getElementById('passMsg').textContent = '';
+        return;
+      }
+      document.getElementById('adminWho').textContent = 'แอดมิน: ' + (user.email || user.uid);
+      showOnly('panel');
+      await loadStats();
+    }
+
+    onAuthStateChanged(auth, user => routeUser(user));
+
+    document.getElementById('btnLogin').onclick = async () => {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      try {
+        await signInWithPopup(auth, provider);
+      } catch (e) {
+        document.getElementById('gateLoginMsg').textContent = 'ล็อกอินไม่สำเร็จ: ' + (e.message || e);
+      }
+    };
+
+    document.getElementById('btnUnlock').onclick = async () => {
+      const pass = document.getElementById('adminPass').value;
+      const msg = document.getElementById('passMsg');
+      if (!pass) {
+        msg.innerHTML = '<span class="err">กรุณากรอกรหัสผ่าน</span>';
+        return;
+      }
+      const expected = String(cfg.passwordHashSha256 || '').toLowerCase();
+      const got = (await sha256Hex(pass)).toLowerCase();
+      if (got !== expected) {
+        msg.innerHTML = '<span class="err">รหัสผ่านไม่ถูกต้อง</span>';
+        return;
+      }
+      setPasswordUnlocked(true);
+      msg.textContent = '';
+      await routeUser(auth.currentUser);
+    };
+
+    document.getElementById('adminPass').addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('btnUnlock').click();
+    });
+    document.getElementById('btnLock').onclick = () => {
+      setPasswordUnlocked(false);
+      routeUser(auth.currentUser);
+    };
+    document.getElementById('btnLogout').onclick = () => {
+      setPasswordUnlocked(false);
+      signOut(auth);
+    };
+    document.getElementById('btnLogoutPass').onclick = () => {
+      setPasswordUnlocked(false);
+      signOut(auth);
+    };
+    document.getElementById('btnLogoutDenied').onclick = () => signOut(auth);
+    document.getElementById('btnRefresh').onclick = () => loadStats();
+  </script>
+</body>
+</html>

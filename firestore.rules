@@ -3,12 +3,7 @@ rules_version = '2';
  * STone — Firestore Security Rules
  * Deploy: firebase deploy --only firestore:rules
  *
- * Path model used by the app:
- *   users/{userId}/meta/settings
- *   users/{userId}/transactions/{txId}
- *
- * Principle: each signed-in user can only read/write their own tree.
- * Unauthenticated access is denied.
+ * Admin (อ่าน deviceHeartbeats): เฉพาะ Google account uburiram@gmail.com
  */
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -21,13 +16,30 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Reject unknown top-level collections
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email is string
+        && request.auth.token.email.lower() == 'uburiram@gmail.com';
+    }
+
+    function heartbeatKeysOk(deviceId) {
+      let k = request.resource.data.keys();
+      return k.hasOnly([
+        'deviceId', 'firstSeen', 'lastSeen', 'os', 'browser', 'userAgent',
+        'language', 'timezone', 'screen', 'isPwa', 'lastAuthUid', 'lastIp',
+        'app', 'pingCount'
+      ])
+      && request.resource.data.deviceId is string
+      && request.resource.data.deviceId == deviceId
+      && request.resource.data.app == 'STone'
+      && request.resource.data.lastSeen is string;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
 
     match /users/{userId} {
-      // User root doc (optional profile) — owner only
       allow read, write: if isOwner(userId);
 
       match /meta/{docId} {
@@ -46,6 +58,16 @@ service cloud.firestore {
           && request.resource.data.id == txId;
         allow delete: if isOwner(userId);
       }
+    }
+
+    match /deviceHeartbeats/{deviceId} {
+      allow read: if isAdmin();
+      allow create: if heartbeatKeysOk(deviceId)
+        && request.resource.data.keys().hasAll(['deviceId', 'lastSeen', 'firstSeen', 'app']);
+      allow update: if heartbeatKeysOk(deviceId)
+        && request.resource.data.deviceId == resource.data.deviceId
+        && request.resource.data.firstSeen == resource.data.firstSeen;
+      allow delete: if isAdmin();
     }
   }
 }
