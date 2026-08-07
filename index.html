@@ -704,19 +704,30 @@
 
   <!-- PWA install prompt (browser only) -->
   <div id="pwaInstallModal" class="fixed inset-0 bg-black/50 z-[120] flex items-end sm:items-center justify-center hidden p-3">
-    <div class="bg-white dark:bg-gray-800 w-full sm:max-w-sm rounded-2xl shadow-xl p-4 border border-gray-100 dark:border-gray-700">
+    <div class="bg-white dark:bg-gray-800 w-full sm:max-w-sm rounded-2xl shadow-xl p-4 border border-gray-100 dark:border-gray-700 max-h-[90vh] overflow-y-auto">
       <div class="flex items-start gap-3">
         <img src="./icon-192.png" alt="" class="w-12 h-12 rounded-xl shadow-sm shrink-0">
         <div class="min-w-0 flex-1">
-          <h3 class="font-bold text-sm text-gray-800 dark:text-gray-100">ติดตั้ง STone ลงเครื่อง?</h3>
-          <p class="text-[11px] text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
+          <h3 id="pwaInstallTitle" class="font-bold text-sm text-gray-800 dark:text-gray-100">ติดตั้ง STone ลงหน้าจอโฮม</h3>
+          <p id="pwaInstallSubtitle" class="text-[11px] text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
             ติดตั้งแล้วเปิดได้เหมือนแอป ใช้งานออฟไลน์ได้สะดวกกว่าเปิดผ่านเบราว์เซอร์
           </p>
         </div>
       </div>
+      <!-- Native install available (Chrome/Edge/Android) -->
+      <div id="pwaInstallNativeBlock" class="hidden mt-3">
+        <p class="text-[11px] text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800 rounded-xl px-3 py-2 leading-relaxed">
+          เบราว์เซอร์นี้รองรับการติดตั้งอัตโนมัติ กดปุ่ม <strong>ติดตั้งเลย</strong> ด้านล่างได้ทันที
+        </p>
+      </div>
+      <!-- Manual steps when beforeinstallprompt is unavailable -->
+      <div id="pwaInstallManualBlock" class="hidden mt-3">
+        <p id="pwaInstallPlatformLabel" class="text-[11px] font-semibold text-gray-700 dark:text-gray-200 mb-1.5"></p>
+        <ol id="pwaInstallSteps" class="list-decimal list-inside text-[11px] text-gray-600 dark:text-gray-300 space-y-1.5 leading-relaxed bg-gray-50 dark:bg-gray-900/40 border border-gray-100 dark:border-gray-700 rounded-xl px-3 py-2.5"></ol>
+      </div>
       <div class="flex gap-2 mt-4">
         <button type="button" id="pwaInstallDismiss" class="flex-1 py-2.5 rounded-xl border border-gray-300 dark:border-gray-600 text-xs font-semibold text-gray-600 dark:text-gray-300">ไว้ทีหลัง</button>
-        <button type="button" id="pwaInstallOk" class="flex-1 py-2.5 rounded-xl bg-brand-600 text-white text-xs font-bold hover:bg-brand-700">ติดตั้ง</button>
+        <button type="button" id="pwaInstallOk" class="flex-1 py-2.5 rounded-xl bg-brand-600 text-white text-xs font-bold hover:bg-brand-700">ติดตั้งเลย</button>
       </div>
       <p id="pwaInstallHint" class="hidden text-[10px] text-gray-500 dark:text-gray-400 mt-2 leading-relaxed"></p>
     </div>
