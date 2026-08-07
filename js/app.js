@@ -2870,6 +2870,8 @@
 
     // ----- PWA install prompt (browser only; skip if already installed) -----
     window._deferredPwaPrompt = null;
+    window._pwaInstallMode = 'manual'; // 'native' | 'manual'
+
     window.isRunningAsInstalledPwa = function() {
       try {
         if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
@@ -2878,6 +2880,7 @@
       } catch (e) { /* ignore */ }
       return false;
     };
+
     window.dismissPwaInstallPrompt = function(days) {
       days = days || 14;
       try {
@@ -2887,6 +2890,7 @@
       const modal = document.getElementById('pwaInstallModal');
       if (modal) modal.classList.add('hidden');
     };
+
     window.shouldShowPwaInstallPrompt = function() {
       if (window.isRunningAsInstalledPwa()) return false;
       try {
@@ -2896,35 +2900,260 @@
       } catch (e) { /* ignore */ }
       return true;
     };
+
+    /** Detect platform/browser for install guidance */
+    window.detectPwaInstallPlatform = function() {
+      const ua = (navigator.userAgent || '').toLowerCase();
+      const isIOS = /iphone|ipad|ipod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      const isAndroid = /android/.test(ua);
+      const isMac = /macintosh|mac os x/.test(ua) && !isIOS;
+      const isWin = /windows/.test(ua);
+      const isLinux = /linux/.test(ua) && !isAndroid;
+
+      // In-app browsers cannot install PWAs reliably
+      const isLine = /line\//.test(ua);
+      const isFB = /fban|fbav|fb_iab|instagram/.test(ua);
+      const isInApp = isLine || isFB || /wv\)|; wv/.test(ua);
+
+      const isChrome = /chrome|crios|chromium/.test(ua) && !/edg|opr|samsung/.test(ua);
+      const isEdge = /edg\//.test(ua);
+      const isSamsung = /samsungbrowser/.test(ua);
+      const isFirefox = /firefox|fxios/.test(ua);
+      const isSafari = /safari/.test(ua) && !/chrome|crios|chromium|android|fxios/.test(ua);
+      const isOpera = /opr|opera/.test(ua);
+
+      return {
+        isIOS: isIOS,
+        isAndroid: isAndroid,
+        isMac: isMac,
+        isWin: isWin,
+        isLinux: isLinux,
+        isDesktop: !isIOS && !isAndroid,
+        isInApp: isInApp,
+        isLine: isLine,
+        isFB: isFB,
+        isChrome: isChrome,
+        isEdge: isEdge,
+        isSamsung: isSamsung,
+        isFirefox: isFirefox,
+        isSafari: isSafari,
+        isOpera: isOpera
+      };
+    };
+
+    /** Manual install steps per platform (Thai) */
+    window.getPwaManualInstallGuide = function() {
+      const p = window.detectPwaInstallPlatform();
+
+      if (p.isInApp) {
+        const appName = p.isLine ? 'LINE' : (p.isFB ? 'Facebook/Instagram' : 'แอปนี้');
+        return {
+          label: 'เปิดในเบราว์เซอร์จริงก่อนติดตั้ง',
+          steps: [
+            'ตอนนี้คุณเปิดผ่าน ' + appName + ' ซึ่งติดตั้งแอปลงหน้าจอโฮมไม่ได้',
+            'แตะเมนู ⋯ หรือปุ่มเปิดในเบราว์เซอร์ (Open in browser)',
+            p.isIOS
+              ? 'เลือกเปิดด้วย Safari แล้วค่อยทำตามขั้นตอน iPhone ด้านล่าง'
+              : 'เลือกเปิดด้วย Chrome แล้วกดเมนู ⋮ → "ติดตั้งแอป" หรือ "Add to Home screen"',
+            'หรือคัดลอกลิงก์นี้ แล้ววางใน Chrome / Safari โดยตรง'
+          ]
+        };
+      }
+
+      if (p.isIOS) {
+        return {
+          label: 'วิธีติดตั้งบน iPhone / iPad (Safari)',
+          steps: [
+            'เปิดเว็บนี้ด้วย Safari (ไม่ใช่ Chrome ในบางเวอร์ชันที่ยังไม่รองรับ)',
+            'แตะปุ่มแชร์ □↑ ที่แถบล่าง (หรือบนสุด)',
+            'เลื่อนหาแล้วแตะ "เพิ่มไปยังหน้าจอโฮม" (Add to Home Screen)',
+            'กด "เพิ่ม" — ไอคอน STone จะปรากฏบนหน้าจอโฮม'
+          ]
+        };
+      }
+
+      if (p.isAndroid && p.isSamsung) {
+        return {
+          label: 'วิธีติดตั้งบน Android (Samsung Internet)',
+          steps: [
+            'แตะเมนู ☰ หรือ ⋮ มุมบน/ล่าง',
+            'เลือก "เพิ่มหน้าไปยัง" หรือ "Add page to"',
+            'เลือก "หน้าจอหลัก" / Home screen',
+            'ยืนยัน — ไอคอน STone จะขึ้นบนหน้าจอโฮม'
+          ]
+        };
+      }
+
+      if (p.isAndroid && p.isFirefox) {
+        return {
+          label: 'วิธีติดตั้งบน Android (Firefox)',
+          steps: [
+            'แตะเมนู ⋮ มุมขวาบน',
+            'เลือก "ติดตั้ง" หรือ "Install"',
+            'ถ้าไม่มีเมนูติดตั้ง ให้เลือก "Add to Home screen"',
+            'ยืนยันการเพิ่มไอคอนลงหน้าจอโฮม'
+          ]
+        };
+      }
+
+      if (p.isAndroid) {
+        return {
+          label: 'วิธีติดตั้งบน Android (Chrome)',
+          steps: [
+            'แตะเมนู ⋮ มุมขวาบน',
+            'เลือก "ติดตั้งแอป" หรือ "Install app" / "Add to Home screen"',
+            'กดติดตั้ง/เพิ่ม — เปิด STone จากไอคอนบนหน้าจอโฮมได้เลย',
+            'ถ้าไม่เห็นเมนู: รีเฟรชหน้า รอสักครู่ แล้วเปิดเมนูอีกครั้ง'
+          ]
+        };
+      }
+
+      if (p.isDesktop && (p.isChrome || p.isEdge || p.isOpera)) {
+        return {
+          label: 'วิธีติดตั้งบนคอมพิวเตอร์ (Chrome / Edge)',
+          steps: [
+            'ดูที่แถบที่อยู่ (Address bar) ด้านขวา มีไอคอนติดตั้ง ⊕ หรือคอมพิวเตอร์พร้อมลูกศร',
+            'คลิกไอคอนนั้น แล้วกด "ติดตั้ง"',
+            'หรือเปิดเมนู ⋮ → "ติดตั้ง STone…" / "Install STone…"',
+            'หลังติดตั้งจะเปิดเป็นหน้าต่างแอปแยกจากเบราว์เซอร์'
+          ]
+        };
+      }
+
+      if (p.isDesktop && p.isFirefox) {
+        return {
+          label: 'วิธีติดตั้งบนคอมพิวเตอร์ (Firefox)',
+          steps: [
+            'Firefox ยังไม่รองรับการติดตั้ง PWA เต็มรูปแบบบนเดสก์ท็อปบางเวอร์ชัน',
+            'แนะนำเปิดด้วย Google Chrome หรือ Microsoft Edge',
+            'จากนั้นใช้ไอคอนติดตั้งบนแถบที่อยู่ หรือเมนู ⋮ → ติดตั้งแอป',
+            'หรือสร้างบุ๊กมาร์กไว้ใช้ชั่วคราว'
+          ]
+        };
+      }
+
+      if (p.isMac && p.isSafari) {
+        return {
+          label: 'วิธีติดตั้งบน Mac (Safari)',
+          steps: [
+            'ใน Safari เมนู File (ไฟล์) → "Add to Dock" หรือ "เพิ่มใน Dock" (macOS ใหม่)',
+            'หรือแชร์ → เพิ่มไปยัง Dock / Home Screen ตามเวอร์ชันระบบ',
+            'ถ้าไม่พบเมนู แนะนำเปิดด้วย Chrome แล้วกดติดตั้งจากแถบที่อยู่',
+            'หลังเพิ่มแล้วเปิดจาก Dock ได้เหมือนแอป'
+          ]
+        };
+      }
+
+      return {
+        label: 'วิธีติดตั้งลงหน้าจอโฮม',
+        steps: [
+          'เปิดเมนูของเบราว์เซอร์ (⋮ หรือ ☰)',
+          'เลือก "ติดตั้งแอป" / "Install app" หรือ "Add to Home screen"',
+          'ยืนยันการติดตั้ง — ไอคอน STone จะปรากฏบนหน้าจอโฮมหรือเดสก์ท็อป',
+          'ถ้าไม่พบเมนู ลองเปิดด้วย Chrome หรือ Safari แล้วทำซ้ำ'
+        ]
+      };
+    };
+
+    /** Update modal UI for native vs manual mode */
+    window.updatePwaInstallModalUI = function() {
+      const canNative = !!window._deferredPwaPrompt;
+      window._pwaInstallMode = canNative ? 'native' : 'manual';
+
+      const nativeBlock = document.getElementById('pwaInstallNativeBlock');
+      const manualBlock = document.getElementById('pwaInstallManualBlock');
+      const okBtn = document.getElementById('pwaInstallOk');
+      const title = document.getElementById('pwaInstallTitle');
+      const subtitle = document.getElementById('pwaInstallSubtitle');
+      const platformLabel = document.getElementById('pwaInstallPlatformLabel');
+      const stepsEl = document.getElementById('pwaInstallSteps');
+      const hint = document.getElementById('pwaInstallHint');
+
+      if (hint) hint.classList.add('hidden');
+
+      if (canNative) {
+        if (nativeBlock) nativeBlock.classList.remove('hidden');
+        if (manualBlock) manualBlock.classList.add('hidden');
+        if (okBtn) {
+          okBtn.textContent = 'ติดตั้งเลย';
+          okBtn.classList.remove('hidden');
+        }
+        if (title) title.textContent = 'ติดตั้ง STone ลงหน้าจอโฮม';
+        if (subtitle) {
+          subtitle.textContent = 'กดปุ่ม "ติดตั้งเลย" เพื่อติดตั้งทันที เปิดใช้ได้เหมือนแอปและใช้งานออฟไลน์ได้';
+        }
+      } else {
+        if (nativeBlock) nativeBlock.classList.add('hidden');
+        if (manualBlock) manualBlock.classList.remove('hidden');
+        const guide = window.getPwaManualInstallGuide();
+        if (platformLabel) platformLabel.textContent = guide.label;
+        if (stepsEl) {
+          stepsEl.innerHTML = '';
+          (guide.steps || []).forEach(function(step) {
+            const li = document.createElement('li');
+            li.textContent = step;
+            stepsEl.appendChild(li);
+          });
+        }
+        if (okBtn) {
+          // Manual mode: primary action is "เข้าใจแล้ว" (close); steps already visible
+          okBtn.textContent = 'เข้าใจแล้ว';
+        }
+        if (title) title.textContent = 'ติดตั้ง STone ลงหน้าจอโฮม';
+        if (subtitle) {
+          subtitle.textContent = 'เบราว์เซอร์นี้ติดตั้งอัตโนมัติไม่ได้ — ทำตามขั้นตอนด้านล่างได้เลย';
+        }
+      }
+    };
+
     window.showPwaInstallPrompt = function() {
       if (!window.shouldShowPwaInstallPrompt()) return;
       const modal = document.getElementById('pwaInstallModal');
       if (!modal) return;
-      const hint = document.getElementById('pwaInstallHint');
-      const okBtn = document.getElementById('pwaInstallOk');
-      // Android/Chrome: native beforeinstallprompt available
-      if (window._deferredPwaPrompt && okBtn) {
-        okBtn.textContent = 'ติดตั้ง';
-        if (hint) hint.classList.add('hidden');
-      } else {
-        // iOS / browsers without beforeinstallprompt — show manual steps
-        if (okBtn) okBtn.textContent = 'วิธีติดตั้ง';
-        if (hint) {
-          const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent || '');
-          hint.textContent = isIOS
-            ? 'บน iPhone/iPad: แตะปุ่มแชร์ □↑ แล้วเลือก "เพิ่มไปยังหน้าจอโฮม"'
-            : 'ใช้เมนูของเบราว์เซอร์ → "ติดตั้งแอป" หรือ "Add to Home screen"';
-          hint.classList.remove('hidden');
-        }
-      }
+      window.updatePwaInstallModalUI();
       modal.classList.remove('hidden');
     };
+
+    window.triggerNativePwaInstall = async function() {
+      if (!window._deferredPwaPrompt) return false;
+      try {
+        window._deferredPwaPrompt.prompt();
+        const choice = await window._deferredPwaPrompt.userChoice;
+        window._deferredPwaPrompt = null;
+        window.updatePwaInstallModalUI();
+        if (choice && choice.outcome === 'accepted') {
+          window.dismissPwaInstallPrompt(365);
+          if (typeof window.showToast === 'function') {
+            window.showToast('กำลังติดตั้ง STone…', 'success');
+          }
+          return true;
+        }
+        // User dismissed native dialog — hide our modal for a week
+        window.dismissPwaInstallPrompt(7);
+        return false;
+      } catch (err) {
+        console.warn('[STone] native install prompt failed', err);
+        window._deferredPwaPrompt = null;
+        // Fall back to manual instructions
+        window.updatePwaInstallModalUI();
+        window.showPwaInstallPrompt();
+        return false;
+      }
+    };
+
     window.initPwaInstallPrompt = function() {
       if (window.isRunningAsInstalledPwa()) return;
+      if (window._pwaInstallInited) return;
+      window._pwaInstallInited = true;
 
       window.addEventListener('beforeinstallprompt', function(e) {
         e.preventDefault();
         window._deferredPwaPrompt = e;
+        // If modal already open in manual mode, switch to native install button
+        const modal = document.getElementById('pwaInstallModal');
+        if (modal && !modal.classList.contains('hidden')) {
+          window.updatePwaInstallModalUI();
+        }
       });
 
       window.addEventListener('appinstalled', function() {
@@ -2944,40 +3173,33 @@
       }
       if (okBtn) {
         okBtn.addEventListener('click', async function() {
+          // Native path: trigger browser install UI immediately
           if (window._deferredPwaPrompt) {
-            try {
-              window._deferredPwaPrompt.prompt();
-              const choice = await window._deferredPwaPrompt.userChoice;
-              window._deferredPwaPrompt = null;
-              if (choice && choice.outcome === 'accepted') {
-                window.dismissPwaInstallPrompt(365);
-              } else {
-                window.dismissPwaInstallPrompt(7);
-              }
-            } catch (err) {
-              console.warn('[STone] install prompt', err);
-              window.dismissPwaInstallPrompt(7);
-            }
-            const modal = document.getElementById('pwaInstallModal');
-            if (modal) modal.classList.add('hidden');
-          } else {
-            // Manual instructions already visible — just close after user reads
-            const hint = document.getElementById('pwaInstallHint');
-            if (hint && hint.classList.contains('hidden')) {
-              window.showPwaInstallPrompt();
-            } else {
-              window.dismissPwaInstallPrompt(7);
-            }
+            await window.triggerNativePwaInstall();
+            return;
           }
+          // Manual path: steps already shown — acknowledge and close
+          window.dismissPwaInstallPrompt(7);
         });
       }
 
-      // Show after UI settles (only browser, not installed app)
+      // Wait a bit for beforeinstallprompt (Chrome often fires after SW is ready)
       setTimeout(function() {
         if (window.shouldShowPwaInstallPrompt()) {
           window.showPwaInstallPrompt();
         }
-      }, 5000);
+      }, 4500);
+      // Second chance: if prompt event arrives late, modal UI updates via listener;
+      // if modal was never shown and event exists, show again once more
+      setTimeout(function() {
+        if (!window.shouldShowPwaInstallPrompt()) return;
+        const modal = document.getElementById('pwaInstallModal');
+        if (modal && modal.classList.contains('hidden') && window._deferredPwaPrompt) {
+          window.showPwaInstallPrompt();
+        } else if (modal && !modal.classList.contains('hidden')) {
+          window.updatePwaInstallModalUI();
+        }
+      }, 9000);
     };
 
     if (document.readyState === 'loading') {
