@@ -1,1 +1,31 @@
-PLACEHOLDER
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระบบบันทึกต้นทุน กำไร - STone</title>
+  <script>
+    // Emergency restore: load last known-good full UI from prior commit (jsDelivr CDN of this repo)
+    // Phase-1 files (stone-ui.css, app-phase1.js) already on main — applied after shell loads when possible
+    (function () {
+      var url = 'https://cdn.jsdelivr.net/gh/uburiram/STone@e5b5f8c9d7a242743da0690f0d0f26dccf1748fc/index.html';
+      fetch(url, { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error('fetch failed'); return r.text(); })
+        .then(function (html) {
+          document.open();
+          document.write(html);
+          document.close();
+        })
+        .catch(function (e) {
+          document.body.innerHTML = '<main style="font-family:sans-serif;padding:1.5rem;max-width:28rem;margin:auto">'
+            + '<h1 style="font-size:1.1rem">กำลังกู้หน้าแอป</h1>'
+            + '<p style="color:#666;font-size:0.9rem">เปิดไม่สำเร็จอัตโนมัติ กรุณาอัปโหลดไฟล์ <code>index.html</code> จากแชทขึ้น GitHub ทับไฟล์นี้</p>'
+            + '<p style="font-size:0.8rem;color:#999">' + String(e) + '</p></main>';
+        });
+    })();
+  </script>
+</head>
+<body>
+  <p style="font-family:sans-serif;padding:2rem;text-align:center;color:#666">กำลังกู้คืนหน้าจอ STone…</p>
+</body>
+</html>
