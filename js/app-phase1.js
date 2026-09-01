@@ -63,6 +63,7 @@
     if (iconEl) iconEl.innerHTML = '<i class="fa-solid ' + icon + ' text-sm"></i>';
   };
 
+  // Enhance filter active style
   const _setTimeFilter = window.setTimeFilter;
   if (typeof _setTimeFilter === 'function') {
     window.setTimeFilter = function (filter) {
@@ -75,6 +76,7 @@
     };
   }
 
+  // Hook refreshDashboard to fill insight + nicer empty ratio copy
   const _refresh = window.refreshDashboard;
   if (typeof _refresh === 'function') {
     window.refreshDashboard = async function () {
