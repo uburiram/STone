@@ -578,7 +578,7 @@
       return new Date(parts[0], parts[1]-1, parts[2]);
     }
 
-    let currentFilter = 'monthly';
+    let currentFilter = 'all';
     let selectedCustomDate = getLocalYYYYMMDD();
     let selectedStartDate = getLocalYYYYMMDD();
     let selectedEndDate = getLocalYYYYMMDD();
@@ -713,7 +713,7 @@
       document.getElementById('selectedDate').value = selectedCustomDate;
       document.getElementById('startDate').value = selectedStartDate;
       document.getElementById('endDate').value = selectedEndDate;
-      window.setTimeFilter('monthly');
+      window.setTimeFilter('all');
       window.finishLoading();
 
       if (SomtumStore.getItem('somtumHasUnsyncedData') === 'true') {
@@ -2757,17 +2757,27 @@
       SomtumStore.setItem('somtumLastBackupRemind', String(Date.now()));
     };
     window.checkWeeklyBackupReminder = function() {
-      // Disabled: popup เตือนสำรองข้อมูลประจำสัปดาห์รบกวนการใช้งานจริง
-      // ยังคงมี Auto Backup เงียบ ๆ ในพื้นหลัง และปุ่ม Export/กู้คืนได้ตามปกติ
-      return;
+      const last = parseInt(SomtumStore.getItem('somtumLastBackupRemind') || '0', 10);
+      const week = 7 * 24 * 60 * 60 * 1000;
+      if (Date.now() - last > week) {
+        const modal = document.getElementById('backupRemindModal');
+        if (modal) {
+          // Don't clash with guestMergeModal (same z-index)
+          setTimeout(() => {
+            const guestModal = document.getElementById('guestMergeModal');
+            if (guestModal && !guestModal.classList.contains('hidden')) return;
+            modal.classList.remove('hidden');
+          }, 2500);
+        }
+      }
     };
     // Hook after finish loading
     if (typeof window.finishLoading === 'function') {
       const _finBak = window.finishLoading;
       window.finishLoading = function() {
         _finBak();
-        // Weekly backup reminder popup disabled (annoying in real use)
-        // STone auto backup snapshot shortly after UI ready (silent, no popup)
+        window.checkWeeklyBackupReminder();
+        // STone auto backup snapshot shortly after UI ready
         setTimeout(function() {
           if (typeof window.performAutoBackup === 'function') {
             window.performAutoBackup();
@@ -3213,4 +3223,3 @@
         });
       });
     }
-
