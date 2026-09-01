@@ -10,6 +10,7 @@
       : [];
   }
 
+  /** Most-used category for type, then recent fallback */
   function suggestCategory(type) {
     var counts = {};
     var lastSeen = {};
@@ -27,6 +28,7 @@
     return keys[0];
   }
 
+  /** Recent amounts for category+type (unique, newest first) */
   function suggestAmounts(type, category, limit) {
     limit = limit || 3;
     var seen = {};
@@ -138,6 +140,7 @@
     });
   }
 
+  /** Wrap openTransactionModal: smart category + amount chips (new records only) */
   function installModalHook() {
     var prev = window.openTransactionModal;
     if (typeof prev !== 'function' || prev.__phase3Hooked) return;
@@ -187,6 +190,7 @@
     window.openTransactionModal = wrapped;
   }
 
+  /** Soft haptic + KPI flash after successful save */
   function installSubmitHook() {
     var prev = window.handleFormSubmit;
     if (typeof prev !== 'function' || prev.__phase3Hooked) return;
@@ -204,6 +208,7 @@
     window.handleFormSubmit = wrapped;
   }
 
+  /** Pulse KPIs when dashboard refreshes */
   function installRefreshHook() {
     var prev = window.refreshDashboard;
     if (typeof prev !== 'function' || prev.__phase3RefreshHooked) return;
