@@ -8,16 +8,36 @@ Modular PWA + IndexedDB (per-account scopes) + Firebase Auth/Firestore + CSP
 STone/
 ├── index.html              # UI + CSP + script tags
 ├── service-worker.js       # network-first สำหรับ app shell (auth-safe)
-├── build.sh                # modular หรือ --bundle → dist/
+├── build.sh                # modular (default) หรือ --bundle → dist/
 ├── js/
 │   ├── storage.js          # SomtumStore v2.1 (IDB per-tx + scope isolation)
-│   ├── app.js              # UI / dashboard / categories / export / calc
+│   ├── app-core.js         # helpers, boot gate, defaults, hydrate, sanitize
+│   ├── app-dashboard.js    # filter/KPI (default รายเดือน), onload, toast
+│   ├── app-tx.js           # บันทึกรายรับ-จ่าย, ปฏิทิน, export/import
+│   ├── app-categories.js   # หมวดหมู่, วัตถุดิบ, ล้างข้อมูล
+│   ├── app-features.js     # dark mode, auto-backup, PWA, SW register
+│   ├── app.js              # stub เท่านั้น (ไม่ใช้รันจริง — ดูโมดูลด้านบน)
+│   ├── reports.js          # PDF / รายงาน
 │   └── firebase.js         # Auth + Firestore incremental sync (ES module)
 ├── tests/
 │   ├── calc.test.js
-│   └── storage-logic.test.js
+│   ├── storage-logic.test.js
+│   └── e2e-flow.test.js
 ├── dist/                   # ผลจาก build.sh สำหรับ deploy
 └── icons (*.png)           # PWA icons รวม maskable
+```
+
+**ลำดับโหลด script (สำคัญ):**
+
+```text
+storage.js
+→ app-core.js
+→ app-dashboard.js
+→ app-tx.js
+→ app-categories.js
+→ app-features.js
+→ reports.js
+→ firebase.js (type=module)
 ```
 
 **ชื่อแสดงผล (PWA):**
@@ -44,57 +64,32 @@ Global keys (shared): `somtumDarkMode`, `somtumActiveScope`, `somtumDataOwnerUid
 
 Boot gate (`__storeReady` + `whenStoreReady`) ป้องกันการ save ทับ empty state ตอน cold start / auth restore
 
+## UX defaults
+
+- แดชบอร์ดเริ่มที่ตัวกรอง **รายเดือน**
+- ปิด popup เตือนสำรองข้อมูลรายสัปดาห์ (Auto Backup เงียบในพื้นหลังยังทำงาน + Export JSON ได้ตามปกติ)
+
 ## CSP
 
 meta CSP พื้นฐาน จำกัด script/style/connect เฉพาะ CDN ที่ใช้  
 ยังต้องมี `'unsafe-inline'` เพราะมี `onclick=` และ Tailwind config inline  
 (ถ้าจะ harden ต่อ ควรย้าย handlers ไป `addEventListener` + nonce)
 
+## Service Worker
+
+- กลยุทธ์ **network-first** สำหรับ HTML / `js/*` (deploy แล้วเห็นของใหม่เร็ว)
+- `CORE_ASSETS` pre-cache รวมโมดูล `app-core` … `app-features` (offline-ready)
+- `CACHE_NAME` ถูก bump อัตโนมัติเมื่อรัน `./build.sh`
+
 ## Build
 
 ```bash
 chmod +x build.sh
-./build.sh          # แยกไฟล์ → dist/  (และ bump CACHE_NAME อัตโนมัติ)
-./build.sh --bundle # รวม storage+app → dist/js/app.bundle.js
+./build.sh            # modular → dist/ (คัดลอกโมดูลทั้งหมด)
+./build.sh --bundle   # รวม storage + app-* เป็น js/app.bundle.js
 ```
 
-เสิร์ฟด้วย static server (ต้องไม่ใช่ `file://` ถ้าจะใช้ module + SW):
-
-```bash
-npx serve dist
-```
-
-## ทดสอบ
-
-```bash
-node tests/calc.test.js
-node tests/storage-logic.test.js
-```
-
-## ตรวจหลัง deploy
-
-1. เปิดแอปครั้งแรกหลังอัปเดต → รายการเดิมครบ
-2. DevTools → Application → IndexedDB → `somtum-idb-v2` (หรือ `...-u-<uid>`) มี store `meta` / `tx` / `kv`
-3. localStorage ยังมีสำเนา key เล็กที่สำคัญ
-4. บันทึกรายการใหม่ → refresh แล้วยังอยู่ (ออฟไลน์ได้)
-5. Console: `[SomtumStore] migration complete` หรือ seed dirty ตามกรณี
-6. ถ้าเคยติดตั้ง PWA เก่า (ชื่อเดิม) → ถอนติดตั้งแล้วติดตั้งใหม่เพื่อเห็น short_name = STone
-
-## หมายเหตุ
-
-- Key ภายในยังใช้ prefix `somtum*` เพื่อไม่ให้ข้อมูลเดิมหาย
-- Service Worker ใช้ network-first สำหรับ HTML/JS เพื่อให้ hotfix auth/login ขึ้นทันที
-- ไม่ cache traffic ของ Google/Firebase auth
-
-
-## ความปลอดภัย & สโตร์
-
-- `firestore.rules` — deploy ด้วย Firebase CLI (ดู SECURITY.md)
-- `privacy.html` — นโยบายความเป็นส่วนตัว
-- `manifest.webmanifest` — PWA / TWA แบบไฟล์คงที่
-- `js/reports.js` — มอดูลรายงาน (PDF, สรุปรายเดือน, ใบสรุปประจำวัน)
-
-### ทดสอบ
+รันเทสต์ pure logic:
 
 ```bash
 node tests/calc.test.js
@@ -102,14 +97,9 @@ node tests/storage-logic.test.js
 node tests/e2e-flow.test.js
 ```
 
-หมายเหตุ: key ข้อมูลในเครื่องยังใช้ prefix `somtum*` เพื่อไม่ให้ข้อมูลเก่าหาย ชื่อที่แสดงและมอดูลผู้ดูแลใช้ **STone**
+## Deploy บนมือถือ (GitHub)
 
-## CSS build (Tailwind local)
-
-```bash
-# ใช้ Tailwind standalone CLI
-./tailwindcss -i ./src/input.css -o ./css/stone.css --minify
-# หรือ: npx tailwindcss -i ./src/input.css -o ./css/stone.css --minify
-```
-
-อย่าใช้ `cdn.tailwindcss.com` ใน production แล้ว — ใช้ `./css/stone.css`
+1. อัปโหลดไฟล์ที่แก้ทับพาธเดิม
+2. รอ Pages/hosting อัปเดต
+3. เปิดแอปออนไลน์หนึ่งครั้ง (ให้ SW ตัวใหม่ติดตั้ง)
+4. Hard refresh หรือปิด–เปิด PWA ถ้ายังเห็นของเก่า

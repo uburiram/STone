@@ -1,12 +1,16 @@
 /* STone Service Worker - network-first for app files (auth-safe) */
-const CACHE_NAME = 'stone-v20260805095922';
+const CACHE_NAME = 'stone-v20260901131500';
 const CORE_ASSETS = [
   './',
   './index.html',
   './manifest.webmanifest',
   './privacy.html',
   './js/storage.js',
-  './js/app.js',
+  './js/app-core.js',
+  './js/app-dashboard.js',
+  './js/app-tx.js',
+  './js/app-categories.js',
+  './js/app-features.js',
   './js/reports.js',
   './js/firebase.js',
   './css/stone.css',
