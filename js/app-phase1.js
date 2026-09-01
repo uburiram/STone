@@ -115,13 +115,19 @@
   }
 })();
 
-/* Phase-2 loader (keeps index.html unchanged) */
-(function loadPhase2() {
-  if (window.__stonePhase2Loading) return;
-  window.__stonePhase2Loading = true;
-  var s = document.createElement('script');
-  s.src = './js/app-phase2.js';
-  s.async = false;
-  s.onerror = function () { console.warn('[STone] app-phase2.js failed to load'); };
-  (document.body || document.documentElement).appendChild(s);
+/* Phase-2 + Phase-3 loader (keeps index.html unchanged) */
+(function loadPhaseChain() {
+  if (window.__stonePhaseChainLoading) return;
+  window.__stonePhaseChainLoading = true;
+  function loadScript(src, next) {
+    var s = document.createElement('script');
+    s.src = src;
+    s.async = false;
+    s.onload = function () { if (next) next(); };
+    s.onerror = function () { console.warn('[STone] failed', src); if (next) next(); };
+    (document.body || document.documentElement).appendChild(s);
+  }
+  loadScript('./js/app-phase2.js', function () {
+    loadScript('./js/app-phase3.js');
+  });
 })();
