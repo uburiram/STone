@@ -63,7 +63,6 @@
     if (iconEl) iconEl.innerHTML = '<i class="fa-solid ' + icon + ' text-sm"></i>';
   };
 
-  // Enhance filter active style
   const _setTimeFilter = window.setTimeFilter;
   if (typeof _setTimeFilter === 'function') {
     window.setTimeFilter = function (filter) {
@@ -76,7 +75,6 @@
     };
   }
 
-  // Hook refreshDashboard to fill insight + nicer empty ratio copy
   const _refresh = window.refreshDashboard;
   if (typeof _refresh === 'function') {
     window.refreshDashboard = async function () {
@@ -115,4 +113,15 @@
       }
     };
   }
+})();
+
+/* Phase-2 loader (keeps index.html unchanged) */
+(function loadPhase2() {
+  if (window.__stonePhase2Loading) return;
+  window.__stonePhase2Loading = true;
+  var s = document.createElement('script');
+  s.src = './js/app-phase2.js';
+  s.async = false;
+  s.onerror = function () { console.warn('[STone] app-phase2.js failed to load'); };
+  (document.body || document.documentElement).appendChild(s);
 })();
