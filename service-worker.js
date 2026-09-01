@@ -8,6 +8,7 @@ const CORE_ASSETS = [
   './js/storage.js',
   './js/app-core.js',
   './js/app-dashboard.js',
+  './js/app-phase1.js',
   './js/app-tx.js',
   './js/app-categories.js',
   './js/app-features.js',
