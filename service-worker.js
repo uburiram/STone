@@ -68,8 +68,9 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);
-  if (isAuthOrFirebase(url)) return;
+  if (isAuthOrFirebase(url)) return; // never intercept Google/Firebase auth traffic
 
+  // Network-first for HTML + own JS so auth/login fixes deploy immediately
   const isAppShell =
     req.mode === 'navigate' ||
     url.pathname.endsWith('.html') ||
@@ -89,16 +90,18 @@ self.addEventListener('fetch', (event) => {
         .catch(() =>
           caches.match(req).then((c) => {
             if (c) return c;
+            // Only fall back to index.html for real navigations — never for JS/CSS
             if (req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) {
               return caches.match('./index.html');
             }
-            return undefined;
+            return undefined; // let browser show network error for missing JS
           })
         )
     );
     return;
   }
 
+  // Cache-first for CDN static assets
   event.respondWith(
     caches.match(req).then((cached) => {
       const fetchPromise = fetch(req)
