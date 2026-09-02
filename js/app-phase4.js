@@ -127,6 +127,8 @@
   }
 
   function installNetworkHook() {
+    if (window.__phase4NetHooked) return;
+    window.__phase4NetHooked = true;
     var prev = window.updateNetworkStatusUI;
     window.updateNetworkStatusUI = async function () {
       var online = navigator.onLine;
@@ -138,11 +140,13 @@
       try { pending = await getPendingCount(); } catch (e2) { pending = 0; }
       enhanceNetworkBadge(online, pending);
     };
-    setInterval(function () {
-      if (typeof window.updateNetworkStatusUI === 'function') {
-        window.updateNetworkStatusUI();
-      }
-    }, 45000);
+    if (!window.__phase4NetInterval) {
+      window.__phase4NetInterval = setInterval(function () {
+        if (typeof window.updateNetworkStatusUI === 'function') {
+          window.updateNetworkStatusUI();
+        }
+      }, 45000);
+    }
   }
 
   function installRefreshHook() {
@@ -165,6 +169,8 @@
   }
 
   function installOnlineToastUpgrade() {
+    if (window.__phase4OnlineHooked) return;
+    window.__phase4OnlineHooked = true;
     window.addEventListener('online', function () {
       setTimeout(async function () {
         var n = await getPendingCount();
