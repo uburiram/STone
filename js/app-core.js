@@ -1,4 +1,4 @@
-/* Emergency SYNC loader for app-core.js */
+/* Emergency SYNC loader for app-core.js (no eval — CSP safe) */
 (function () {
   var url = 'https://cdn.jsdelivr.net/gh/uburiram/STone@ca0490e2cff6dcd2949876030e241fd4f3b836d6/js/app-core.js';
   try {
@@ -6,8 +6,11 @@
     xhr.open('GET', url, false);
     xhr.send(null);
     if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText) {
-      (0, eval)(xhr.responseText);
+      var el = document.createElement('script');
+      el.text = xhr.responseText;
+      (document.head || document.documentElement).appendChild(el);
       console.info('[STone] emergency SYNC loaded', 'app-core.js', xhr.responseText.length);
+
       var prev = window.ensureTransactionsLoaded;
       if (typeof prev === 'function' && !prev.__rtUnion) {
         window.ensureTransactionsLoaded = async function (force) {
@@ -30,6 +33,7 @@
         };
         window.ensureTransactionsLoaded.__rtUnion = true;
       }
+
     } else {
       console.error('[STone] emergency HTTP', xhr.status, url);
     }
