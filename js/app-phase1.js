@@ -115,7 +115,7 @@
   }
 })();
 
-/* Phase-2 + Phase-3 + Phase-4 loader (keeps index.html unchanged) */
+/* Phase-2..5 loader (keeps index.html unchanged) */
 (function loadPhaseChain() {
   if (window.__stonePhaseChainLoading) return;
   window.__stonePhaseChainLoading = true;
@@ -129,7 +129,9 @@
   }
   loadScript('./js/app-phase2.js', function () {
     loadScript('./js/app-phase3.js', function () {
-      loadScript('./js/app-phase4.js');
+      loadScript('./js/app-phase4.js', function () {
+        loadScript('./js/app-phase5.js');
+      });
     });
   });
 })();
