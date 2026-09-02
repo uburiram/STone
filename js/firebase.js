@@ -13,7 +13,14 @@
 // Ensure IndexedDB store is ready before any auth/hydrate path touches app data.
 // app.js may still be parsing; init is idempotent and LS fallback works either way.
 if (typeof SomtumStore !== 'undefined' && SomtumStore.init) {
-  await SomtumStore.init();
+  try {
+    await Promise.race([
+      SomtumStore.init(),
+      new Promise(function(resolve) { setTimeout(resolve, 8000); })
+    ]);
+  } catch (e) {
+    console.warn('[auth] store init before firebase', e);
+  }
 }
 
 const firebaseConfig = {
@@ -103,8 +110,22 @@ const firebaseConfig = {
      * Google login — POPUP first (works on GitHub Pages).
      * Redirect is last resort only; often fails on GH Pages due to 3rd-party storage.
      */
+    window.__loginInFlight = false;
     window.loginGoogle = async function() {
+      if (window.__loginInFlight) {
+        if (typeof window.showToast === 'function') window.showToast('กำลังเข้าสู่ระบบอยู่แล้ว...');
+        return;
+      }
+      window.__loginInFlight = true;
       try {
+        if (auth && auth.currentUser) {
+          window.currentUser = auth.currentUser;
+          if (typeof window.showToast === 'function') {
+            window.showToast('เข้าสู่ระบบแล้ว: ' + (auth.currentUser.displayName || auth.currentUser.email || ''));
+          }
+          try { if (typeof window.initFirestoreListeners === 'function') window.initFirestoreListeners(); } catch (e) {}
+          return;
+        }
         if (typeof window.showToast === 'function') {
           window.showToast('กำลังเปิดหน้าต่างเข้าสู่ระบบ Google...');
         }
@@ -142,29 +163,37 @@ const firebaseConfig = {
           return;
         }
 
-        if (code === 'auth/popup-blocked') {
-          alert(
-            'เบราว์เซอร์บล็อกหน้าต่างป๊อปอัป\n\n' +
-            'วิธีแก้:\n' +
-            '1) กดไอคอนป๊อปอัปในแถบที่อยู่ แล้ว "อนุญาต"\n' +
-            '2) หรือเปิดเว็บใน Chrome/Safari (ไม่ใช่ในแอป LINE/Facebook)\n' +
-            'แล้วกดเข้าสู่ระบบอีกครั้ง'
-          );
-          return;
+        // popup-blocked: do not return — try redirect below
+
+        // Try redirect as last resort (Android PWA / in-app browsers)
+        if (code === 'auth/popup-blocked' || code === 'auth/internal-error' ||
+            code === 'auth/cancelled-popup-request' || code === 'auth/network-request-failed') {
+          try {
+            if (typeof window.showToast === 'function') {
+              window.showToast('ป๊อปอัปใช้ไม่ได้ — กำลังสลับไปหน้าเข้าสู่ระบบ Google...');
+            }
+            await signInWithRedirect(auth, googleProvider);
+            return;
+          } catch (redirErr) {
+            console.warn('[auth] redirect also failed', redirErr);
+          }
         }
 
-        // internal-error / network / other — explain clearly (redirect usually also fails on GH Pages)
         const msg = (popupError && popupError.message) ? popupError.message : String(popupError);
         alert(
           'เข้าสู่ระบบไม่สำเร็จ (' + (code || 'unknown') + ')\n\n' +
           msg + '\n\n' +
+          'ข้อมูลที่บันทึกไว้ในเครื่องยังอยู่ ไม่ได้ถูกลบ\n\n' +
           'แนะนำ:\n' +
-          '• เปิดเว็บใน Chrome หรือ Safari โดยตรง (ไม่เปิดผ่าน LINE)\n' +
+          '• เปิดเว็บใน Chrome โดยตรง (ไม่เปิดผ่าน LINE/Facebook)\n' +
           '• อนุญาตป๊อปอัปสำหรับ uburiram.github.io\n' +
-          '• ตรวจว่าใน Firebase Console → Authentication → Authorized domains มี uburiram.github.io'
+          '• กดปุ่ม Google อีกครั้ง'
         );
+      } finally {
+        window.__loginInFlight = false;
       }
     };
+
 
     window.logoutGoogle = async function() {
       window.showConfirmModal(
@@ -205,7 +234,14 @@ const firebaseConfig = {
       });
     };
 
-    onAuthStateChanged(auth, async (user) => {
+    window.__authHandlerChain = Promise.resolve();
+    onAuthStateChanged(auth, (user) => {
+      window.__authHandlerChain = window.__authHandlerChain.then(function() {
+        return window.__handleAuthState(user);
+      }).catch(function(e) { console.error('[auth] handler', e); });
+    });
+
+    window.__handleAuthState = async function(user) {
       window.currentUser = user;
       const avatar = document.getElementById('userAvatar');
       const nameElem = document.getElementById('userName');
@@ -215,12 +251,12 @@ const firebaseConfig = {
       const btnLogout = document.getElementById('btnLogoutGoogle');
 
       if (user) {
-        avatar.src = user.photoURL || './icon-192.png';
-        nameElem.innerText = user.displayName || user.email || 'ผู้ใช้ Google';
+        if (avatar) avatar.src = user.photoURL || './icon-192.png';
+        if (nameElem) nameElem.innerText = user.displayName || user.email || 'ผู้ใช้ Google';
         if (statusElem) statusElem.innerText = 'เชื่อมต่อ Google แล้ว — พร้อมซิงค์ Cloud';
         if (badge) badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-emerald-500 border-2 border-white dark:border-gray-800 rounded-full';
-        btnLogin.classList.add('hidden');
-        btnLogout.classList.remove('hidden');
+        if (btnLogin) btnLogin.classList.add('hidden');
+        if (btnLogout) btnLogout.classList.remove('hidden');
 
         // Snapshot guest-scope data BEFORE switching (for optional merge prompt)
         let guestSnapshot = null;
@@ -303,30 +339,41 @@ const firebaseConfig = {
           window.initFirestoreListeners();
         }
       } else {
-        avatar.src = './icon-192.png';
-        nameElem.innerText = 'ผู้ใช้งานทั่วไป (ยังไม่ได้ล็อกอิน)';
-        statusElem.innerText = 'บันทึกข้อมูลเฉพาะในเครื่องนี้';
-        badge.className = 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-gray-400 border-2 border-white rounded-full';
-        btnLogin.classList.remove('hidden');
-        btnLogout.classList.add('hidden');
-        document.getElementById('btnSyncNow').classList.add('hidden');
-
-        // Ensure guest scope is active when signed out (e.g. session expired)
+        // Session missing/expired: NEVER switch away from the account IDB.
+        // Switching to guest was hiding somtum-idb-v2-u-<uid> and looked like data loss.
+        const hadAccount = !!(SomtumStore && SomtumStore.activeScope && SomtumStore.activeScope !== 'guest');
         try {
-          if (SomtumStore.switchScope && SomtumStore.activeScope !== 'guest') {
-            await SomtumStore.switchScope(null);
-            window.__txCacheLoaded = false;
-            window.__loadedRange = { start: null, end: null };
-            if (typeof window.__hydrateAppDataFromStoreAsync === 'function') {
+          if (avatar) avatar.src = './icon-192.png';
+          if (nameElem) nameElem.innerText = hadAccount
+            ? 'เซสชันหมดอายุ — ข้อมูลในเครื่องยังอยู่'
+            : 'ผู้ใช้งานทั่วไป (ยังไม่ได้ล็อกอิน)';
+          if (statusElem) statusElem.innerText = hadAccount
+            ? 'กดปุ่ม Google เพื่อเข้าสู่ระบบอีกครั้ง (ข้อมูลไม่หาย)'
+            : 'บันทึกข้อมูลเฉพาะในเครื่องนี้';
+          if (badge) badge.className = hadAccount
+            ? 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-amber-500 border-2 border-white dark:border-gray-800 rounded-full'
+            : 'absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-gray-400 border-2 border-white rounded-full';
+          if (btnLogin) btnLogin.classList.remove('hidden');
+          if (btnLogout) btnLogout.classList.add('hidden');
+          const btnSync = document.getElementById('btnSyncNow');
+          if (btnSync) btnSync.classList.add('hidden');
+        } catch (uiErr) { console.warn(uiErr); }
+
+        try {
+          if (SomtumStore && SomtumStore.recoverScopeIfEmpty) {
+            const recovered = await SomtumStore.recoverScopeIfEmpty();
+            if (recovered && typeof window.__hydrateAppDataFromStoreAsync === 'function') {
+              window.__txCacheLoaded = false;
+              window.__loadedRange = { start: null, end: null };
               await window.__hydrateAppDataFromStoreAsync();
+              if (typeof window.refreshDashboard === 'function') window.refreshDashboard();
             }
-            if (typeof window.refreshDashboard === 'function') window.refreshDashboard();
           }
         } catch (e) {
-          console.warn('guest scope restore failed', e);
+          console.warn('account scope recover failed', e);
         }
       }
-    });
+    };
 
     /**
      * Merge category subs trees by node name (case-insensitive).
@@ -795,13 +842,19 @@ const firebaseConfig = {
      */
     window._doForceSyncWithPrune = async function() {
       if (!window.currentUser || !window.db) return;
-      window.showToast('กำลังซิงค์แบบเครื่องนี้เป็นต้นทาง...');
       try {
         // Full local set from IDB (not only in-memory range)
         let allTx = window.appData.transactions || [];
         if (SomtumStore.getAllTx) {
           allTx = await SomtumStore.getAllTx();
         }
+        if (!allTx || allTx.length === 0) {
+          if (typeof window.showToast === 'function') {
+            window.showToast('เครื่องนี้ยังไม่มีรายการ — ไม่ซิงค์ทับ Cloud เพื่อกันข้อมูลหาย', 'error');
+          }
+          return;
+        }
+        window.showToast('กำลังซิงค์แบบเครื่องนี้เป็นต้นทาง...');
         window.appData = window.sanitizeAppData(Object.assign({}, window.appData, { transactions: allTx }));
 
         const settingsRef = doc(db, "users", window.currentUser.uid, "meta", "settings");

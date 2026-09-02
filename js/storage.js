@@ -397,6 +397,10 @@
       if (next === activeScope && ready && db) {
         return true;
       }
+      if (this._initLock) {
+        try { await this._initLock; } catch (e) { /* */ }
+        if (next === activeScope && ready && db) return true;
+      }
       console.info('[STone] switchScope', activeScope, '→', next);
       try {
         await writeQueue;
@@ -421,6 +425,39 @@
     },
 
     async init() {
+      // Restore last logged-in account scope so data is visible even if Google session expired
+      if (!this._bootScopeApplied) {
+        this._bootScopeApplied = true;
+        if (!activeScope || activeScope === 'guest') {
+          var persisted = 'guest';
+          try {
+            var ptr = localStorage.getItem(SCOPE_POINTER_KEY);
+            if (ptr && ptr !== 'guest' && String(ptr).length >= 8) persisted = String(ptr);
+            else {
+              var uid = localStorage.getItem('somtumDataOwnerUid');
+              if (uid && uid !== 'guest' && String(uid).length >= 8) persisted = String(uid);
+            }
+          } catch (e) { /* */ }
+          if (persisted !== 'guest') {
+            activeScope = persisted;
+            console.info('[STone] restore persisted scope', activeScope);
+          }
+        }
+      }
+      if (ready && db) return true;
+      if (this._initLock) return this._initLock;
+      var self = this;
+      this._initLock = (async function() {
+        try {
+          return await self._initInner();
+        } finally {
+          self._initLock = null;
+        }
+      })();
+      return this._initLock;
+    },
+
+    async _initInner() {
       if (ready && db) return true;
       try {
         db = await openDB(activeScope);
@@ -852,6 +889,42 @@
       } catch (e) {
         console.warn('seedDirtyIfNeeded', e);
       }
+    },
+
+    /**
+     * If we are on empty guest scope but a uid-scoped IDB exists on this device,
+     * reopen that account DB. Never deletes any database.
+     */
+    async recoverScopeIfEmpty() {
+      if (activeScope && activeScope !== 'guest') return false;
+      let n = 0;
+      try { n = await countTx(); } catch (e) { n = 0; }
+      if (n > 0) return false;
+      let names = [];
+      try {
+        if (typeof indexedDB !== 'undefined' && indexedDB.databases) {
+          const list = await indexedDB.databases();
+          names = (list || []).map(function(x) { return x && x.name; }).filter(Boolean);
+        }
+      } catch (e) {
+        return false;
+      }
+      const uids = [];
+      for (let i = 0; i < names.length; i++) {
+        const nm = names[i];
+        if (nm && nm.indexOf('somtum-idb-v2-u-') === 0) {
+          uids.push(nm.slice('somtum-idb-v2-u-'.length));
+        }
+      }
+      if (!uids.length) return false;
+      let pick = uids[0];
+      try {
+        const saved = localStorage.getItem('somtumDataOwnerUid') || localStorage.getItem(SCOPE_POINTER_KEY);
+        if (saved && uids.indexOf(saved) !== -1) pick = saved;
+      } catch (e) { /* */ }
+      console.info('[STone] recover account scope from IDB', pick, 'candidates', uids.length);
+      await this.switchScope(pick);
+      return true;
     },
 
     async stats() {

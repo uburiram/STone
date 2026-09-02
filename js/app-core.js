@@ -79,6 +79,20 @@
       };
     }
 
+
+    if (typeof window.loginGoogle !== 'function') {
+      window.loginGoogle = function() {
+        if (typeof window.showToast === 'function') {
+          window.showToast('กำลังโหลดระบบเข้าสู่ระบบ... กรุณากดอีกครั้งใน 2 วินาที');
+        } else {
+          alert('กำลังโหลดระบบเข้าสู่ระบบ กรุณากดอีกครั้ง');
+        }
+      };
+    }
+    if (typeof window.logoutGoogle !== 'function') {
+      window.logoutGoogle = function() {};
+    }
+
     window.DEFAULT_CATEGORIES = {
       income: [
         { name: 'เงินสด', subs: [] },
@@ -290,9 +304,10 @@
       } else {
         data.customGoalPercent = null;
       }
-      data.transactions = data.transactions.filter(tx => {
-        // Validate date format YYYY-MM-DD
-        const dateOk = typeof tx.date === 'string' && /^\\d{4}-\\d{2}-\\d{2}$/.test(tx.date);
+      var _srcTx = Array.isArray(data.transactions) ? data.transactions.slice() : [];
+      var _kept = _srcTx.filter(tx => {
+        // Validate date format YYYY-MM-DD (use [0-9] so it cannot be double-escaped)
+        const dateOk = typeof tx.date === 'string' && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(tx.date);
         return tx && typeof tx === 'object'
           && (tx.type === 'income' || tx.type === 'expense')
           && dateOk
@@ -301,12 +316,20 @@
         id: String(tx.id || (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2))),
         type: tx.type,
         date: tx.date,
-        time: (typeof tx.time === 'string' && /^\\d{2}:\\d{2}/.test(tx.time)) ? tx.time.slice(0,5) : '00:00',
+        time: (typeof tx.time === 'string' && /^[0-9]{2}:[0-9]{2}/.test(tx.time)) ? tx.time.slice(0,5) : '00:00',
         category: String(tx.category || 'ไม่ระบุ').slice(0, 100),
         subCategory: tx.subCategory ? String(tx.subCategory).slice(0, 200) : '',
         amount: Number(Number(tx.amount).toFixed(2)),
         note: tx.note ? String(tx.note).slice(0, 500) : ''
       }));
+      if (_srcTx.length > 0 && _kept.length === 0) {
+        console.error('[STone] sanitize refused to drop all', _srcTx.length, 'transactions — keeping originals');
+        data.transactions = _srcTx.filter(function(tx) {
+          return tx && tx.id && (tx.type === 'income' || tx.type === 'expense') && Number(tx.amount) > 0;
+        });
+      } else {
+        data.transactions = _kept;
+      }
       return data;
     };
 
@@ -569,6 +592,9 @@
 
     if (window.SomtumStore && typeof window.SomtumStore.init === 'function') {
       window.__bootPromise = window.SomtumStore.init().then(async function () {
+        try {
+          if (SomtumStore.recoverScopeIfEmpty) await SomtumStore.recoverScopeIfEmpty();
+        } catch (recErr) { console.warn('[boot] recoverScopeIfEmpty', recErr); }
         await window.__hydrateAppDataFromStoreAsync();
         if (typeof window.refreshDashboard === 'function' && document.getElementById('kpiTotalIncome')) {
           try { await window.refreshDashboard(); } catch (e) { /* UI may not be ready */ }
