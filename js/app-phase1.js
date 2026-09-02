@@ -115,7 +115,7 @@
   }
 })();
 
-/* Phase-2 + Phase-3 loader (keeps index.html unchanged) */
+/* Phase-2 + Phase-3 + Phase-4 loader (keeps index.html unchanged) */
 (function loadPhaseChain() {
   if (window.__stonePhaseChainLoading) return;
   window.__stonePhaseChainLoading = true;
@@ -128,6 +128,8 @@
     (document.body || document.documentElement).appendChild(s);
   }
   loadScript('./js/app-phase2.js', function () {
-    loadScript('./js/app-phase3.js');
+    loadScript('./js/app-phase3.js', function () {
+      loadScript('./js/app-phase4.js');
+    });
   });
 })();
