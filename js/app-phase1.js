@@ -1,3 +1,22 @@
+/* Soft-wrap ensureTransactionsLoaded so empty-DB hydrate does not error-spam */
+(function () {
+  function softWrapEnsure() {
+    var prev = window.ensureTransactionsLoaded;
+    if (typeof prev !== 'function' || prev.__stoneSoftWrapped) return;
+    var wrapped = async function () {
+      try { return await prev.apply(this, arguments); }
+      catch (e) {
+        console.info('[hydrate] ensureTransactionsLoaded soft-skip:', e && e.message ? e.message : e);
+      }
+    };
+    wrapped.__stoneSoftWrapped = true;
+    window.ensureTransactionsLoaded = wrapped;
+  }
+  softWrapEnsure();
+  setTimeout(softWrapEnsure, 0);
+  setTimeout(softWrapEnsure, 800);
+})();
+
 /* STone Phase-1 UI intelligence — additive, no data schema change
  * Load AFTER app-dashboard.js
  */
