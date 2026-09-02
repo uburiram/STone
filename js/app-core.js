@@ -1,1 +1,1 @@
-PLACEHOLDER_CORE
+@file:///tmp/app-core.js

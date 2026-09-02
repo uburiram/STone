@@ -1,1 +1,1 @@
-PLACEHOLDER_TX
+@file:///tmp/app-tx.js

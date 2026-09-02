@@ -1,1 +1,1 @@
-PLACEHOLDER_STORAGE
+@file:///tmp/storage.js

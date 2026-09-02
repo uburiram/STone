@@ -1,1 +1,1 @@
-PLACEHOLDER_FIREBASE
+@file:///tmp/firebase.js
