@@ -1,4 +1,4 @@
-/* STone UI polish — Phase 1+2+3 (additive; does not change data layer) */
+/* STone UI polish — Phase 1+2+3+4 (additive; does not change data layer) */
 :root {
   --stone-radius-lg: 1.1rem;
   --stone-shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
@@ -236,4 +236,86 @@
 @keyframes stone-sheet-up {
   from { transform: translateY(12px); opacity: 0.85; }
   to { transform: translateY(0); opacity: 1; }
+}
+
+/* Phase 4 — skeleton + offline clarity */
+.stone-skel-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.85rem 0.75rem;
+  border-radius: 0.85rem;
+  background: #fff;
+  border: 1px solid #f3f4f6;
+}
+.dark .stone-skel-row {
+  background: rgba(31, 41, 55, 0.85);
+  border-color: #374151;
+}
+.stone-skel-line {
+  height: 0.65rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f3f4f6 0%, #e5e7eb 40%, #f3f4f6 80%);
+  background-size: 200% 100%;
+  animation: stone-shimmer 1.2s ease-in-out infinite;
+}
+.dark .stone-skel-line {
+  background: linear-gradient(90deg, #374151 0%, #4b5563 40%, #374151 80%);
+  background-size: 200% 100%;
+}
+.stone-skel-w-40 { width: 42%; }
+.stone-skel-w-24 { width: 4.5rem; }
+.stone-skel-w-16 { width: 3.25rem; }
+@keyframes stone-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+.stone-list-refreshing {
+  opacity: 0.72;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.stone-row-enter {
+  animation: stone-row-in 0.28s ease both;
+}
+@keyframes stone-row-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.stone-offline-strip {
+  margin: 0.5rem 0.75rem 0;
+  padding: 0.55rem 0.75rem;
+  border-radius: 0.75rem;
+  font-size: 11px;
+  font-weight: 600;
+  color: #9f1239;
+  background: linear-gradient(135deg, #fff1f2, #ffe4e6);
+  border: 1px solid rgba(244, 63, 94, 0.25);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  line-height: 1.35;
+}
+.dark .stone-offline-strip {
+  color: #fda4af;
+  background: linear-gradient(135deg, rgba(136, 19, 55, 0.35), rgba(127, 29, 29, 0.25));
+  border-color: rgba(251, 113, 133, 0.3);
+}
+.stone-offline-strip.hidden { display: none; }
+
+@keyframes stone-net-pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+.stone-net-pulse {
+  animation: stone-net-pulse 0.45s ease;
+}
+
+body.stone-offline #networkStatusBadge {
+  box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.15);
 }
