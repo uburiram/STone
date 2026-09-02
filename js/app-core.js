@@ -1,1 +1,1 @@
-@file:///tmp/app-core.js
+/tmp/c_app-core.js
