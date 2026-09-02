@@ -1,4 +1,4 @@
-/* STone UI polish — Phase 1+2+3+4 (additive; does not change data layer) */
+/* STone UI polish — Phase 1+2+3+4+5 (additive; does not change data layer) */
 :root {
   --stone-radius-lg: 1.1rem;
   --stone-shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
@@ -144,7 +144,7 @@
   color: #e5e7eb;
 }
 
-/* Phase 2 — insights */
+/* Phase 2 */
 .stone-phase2 .stone-spark {
   width: 100%;
   height: 3rem;
@@ -162,7 +162,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Phase 3 — micro-interactions + smart suggest */
+/* Phase 3 */
 @keyframes stone-kpi-flash {
   0% { transform: scale(1); }
   40% { transform: scale(1.03); }
@@ -171,7 +171,6 @@
 .stone-kpi-flash {
   animation: stone-kpi-flash 0.55s ease;
 }
-
 @keyframes stone-pulse-once {
   0% { box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.35); }
   100% { box-shadow: 0 0 0 8px rgba(234, 88, 12, 0); }
@@ -180,7 +179,6 @@
   animation: stone-pulse-once 0.4s ease;
   border-color: #ea580c !important;
 }
-
 .stone-suggest {
   margin-bottom: 0.5rem;
   padding: 0.5rem 0.65rem;
@@ -228,7 +226,6 @@
   transform: scale(0.96);
   background: #fff7ed;
 }
-
 #transactionModal.stone-modal-enter .bg-white,
 #transactionModal.stone-modal-enter .dark\:bg-gray-800 {
   animation: stone-sheet-up 0.28s ease;
@@ -238,7 +235,7 @@
   to { transform: translateY(0); opacity: 1; }
 }
 
-/* Phase 4 — skeleton + offline clarity */
+/* Phase 4 */
 .stone-skel-row {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -271,13 +268,11 @@
   0% { background-position: 100% 0; }
   100% { background-position: -100% 0; }
 }
-
 .stone-list-refreshing {
   opacity: 0.72;
   transition: opacity 0.2s ease;
   pointer-events: none;
 }
-
 .stone-row-enter {
   animation: stone-row-in 0.28s ease both;
 }
@@ -285,7 +280,6 @@
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
 .stone-offline-strip {
   margin: 0.5rem 0.75rem 0;
   padding: 0.55rem 0.75rem;
@@ -306,7 +300,6 @@
   border-color: rgba(251, 113, 133, 0.3);
 }
 .stone-offline-strip.hidden { display: none; }
-
 @keyframes stone-net-pulse {
   0% { transform: scale(1); }
   50% { transform: scale(1.04); }
@@ -315,7 +308,34 @@
 .stone-net-pulse {
   animation: stone-net-pulse 0.45s ease;
 }
-
 body.stone-offline #networkStatusBadge {
   box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.15);
+}
+
+/* Phase 5 — monthly snapshot */
+.stone-month-snap {
+  margin-top: 0.25rem;
+}
+.stone-snap-cell {
+  background: #f9fafb;
+  border-radius: 0.75rem;
+  padding: 0.5rem 0.4rem;
+  text-align: center;
+}
+.dark .stone-snap-cell {
+  background: rgba(31, 41, 55, 0.65);
+}
+.stone-snap-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.15rem;
+}
+.stone-snap-val {
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
