@@ -61,10 +61,11 @@
         (document.body || document.documentElement).appendChild(s);
       } catch (e) {}
     }
-    var v = '202609031520';
+    var v = '202609031525';
     inject('./js/app-autosync.js?v=' + v);
     inject('./js/app-layout-fix.js?v=' + v);
     inject('./js/app-dashboard-order.js?v=' + v);
+    inject('./js/app-phase2-anchor-fix.js?v=' + v);
     setTimeout(function () {
       try {
         if (!window.db && !window.auth) {
