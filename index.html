@@ -33,13 +33,16 @@
     document.open();
     document.write(html);
     document.close();
-    // Inject layout fix (calendar under dashboard) after shell loads
-    try {
-      var s = document.createElement('script');
-      s.src = './js/app-layout-fix.js?v=202609031300';
-      s.defer = true;
-      (document.body || document.documentElement).appendChild(s);
-    } catch (e) {}
+    function inject(src) {
+      try {
+        var s = document.createElement('script');
+        s.src = src;
+        s.defer = true;
+        (document.body || document.documentElement).appendChild(s);
+      } catch (e) {}
+    }
+    inject('./js/app-autosync.js?v=202609031410');
+    inject('./js/app-layout-fix.js?v=202609031410');
   })();
   </script>
 </body>
