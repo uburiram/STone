@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>STone — กำลังกู้หน้า…</title>
+  <title>STone — กำลังโหลด…</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f9fafb;color:#111}
   .box{text-align:center;padding:1.5rem} .spin{animation:s 1s linear infinite}@keyframes s{to{transform:rotate(360deg)}}</style>
@@ -33,6 +33,13 @@
     document.open();
     document.write(html);
     document.close();
+    // Inject layout fix (calendar under dashboard) after shell loads
+    try {
+      var s = document.createElement('script');
+      s.src = './js/app-layout-fix.js?v=202609031300';
+      s.defer = true;
+      (document.body || document.documentElement).appendChild(s);
+    } catch (e) {}
   })();
   </script>
 </body>
