@@ -1,5 +1,5 @@
 /* STone Service Worker - network-first for app files (auth-safe) */
-const CACHE_NAME = 'stone-v20260903150000';
+const CACHE_NAME = 'stone-v20260903152000';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -13,8 +13,8 @@ const CORE_ASSETS = [
   './js/app-phase3.js',
   './js/app-phase4.js',
   './js/app-phase5.js',
-  './js/app-dashboard-order.js',
   './js/app-autosync.js',
+  './js/app-dashboard-order.js',
   './js/app-layout-fix.js',
   './js/app-tx.js',
   './js/app-categories.js',
@@ -34,7 +34,8 @@ const CORE_ASSETS = [
   './apple-touch-icon-180.png',
   './icon-maskable-192.png',
   './icon-maskable-512.png',
-  './icon_256x256.png'
+  './icon_256x256.png',
+  'https://cdn.jsdelivr.net/gh/uburiram/STone@ac6bd385a45f89e99996542626ac700f5bc80936/index.html'
 ];
 
 self.addEventListener('install', (event) => {

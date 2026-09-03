@@ -9,25 +9,45 @@
   .box{text-align:center;padding:1.5rem} .spin{animation:s 1s linear infinite}@keyframes s{to{transform:rotate(360deg)}}</style>
 </head>
 <body>
-  <div class="box">
+  <div class="box" id="bootBox">
     <div class="spin" style="font-size:2rem;display:inline-block">↻</div>
     <p>กำลังโหลดหน้าแอป STone…</p>
   </div>
   <script>
   (async function () {
+    var SHELL_KEY = 'stone_shell_html_v1';
     var urls = [
       'https://cdn.jsdelivr.net/gh/uburiram/STone@ac6bd385a45f89e99996542626ac700f5bc80936/index.html',
       'https://raw.githubusercontent.com/uburiram/STone/ac6bd385a45f89e99996542626ac700f5bc80936/index.html'
     ];
     var html = null, err = null;
-    for (var i = 0; i < urls.length; i++) {
-      try {
-        var r = await fetch(urls[i], { cache: 'no-store' });
-        if (r.ok) { html = await r.text(); break; }
-      } catch (e) { err = e; }
+    try {
+      var cached = sessionStorage.getItem(SHELL_KEY) || localStorage.getItem(SHELL_KEY);
+      if (cached && cached.indexOf('dashboardInsight') >= 0 && cached.indexOf('firebase.js') >= 0) {
+        html = cached;
+      }
+    } catch (e) {}
+    if (!html) {
+      for (var i = 0; i < urls.length; i++) {
+        try {
+          var r = await fetch(urls[i], { cache: 'no-store' });
+          if (r.ok) {
+            html = await r.text();
+            if (html && html.indexOf('dashboardInsight') >= 0) {
+              try {
+                sessionStorage.setItem(SHELL_KEY, html);
+                localStorage.setItem(SHELL_KEY, html);
+              } catch (e2) {}
+              break;
+            }
+            html = null;
+          }
+        } catch (e) { err = e; }
+      }
     }
     if (!html) {
-      document.body.innerHTML = '<div class="box"><p>โหลดไม่สำเร็จ — รีเฟรชอีกครั้ง</p><p style="font-size:12px;color:#666">' + (err && err.message ? err.message : '') + '</p></div>';
+      var box = document.getElementById('bootBox') || document.body;
+      box.innerHTML = '<div class="box"><p>โหลดไม่สำเร็จ</p><p style="font-size:12px;color:#666">กรุณาเชื่อมต่อเน็ตครั้งหนึ่งเพื่อแคชหน้าแอป แล้วเปิดใหม่</p><button onclick="location.reload()" style="margin-top:12px;padding:8px 16px;border-radius:10px;border:0;background:#ea580c;color:#fff;font-weight:700">ลองใหม่</button></div>';
       return;
     }
     document.open();
@@ -41,10 +61,20 @@
         (document.body || document.documentElement).appendChild(s);
       } catch (e) {}
     }
-    var v = '202609031500';
+    var v = '202609031520';
     inject('./js/app-autosync.js?v=' + v);
     inject('./js/app-layout-fix.js?v=' + v);
     inject('./js/app-dashboard-order.js?v=' + v);
+    setTimeout(function () {
+      try {
+        if (!window.db && !window.auth) {
+          var s = document.createElement('script');
+          s.type = 'module';
+          s.src = './js/firebase.js?v=' + v;
+          document.body.appendChild(s);
+        }
+      } catch (e) {}
+    }, 2500);
   })();
   </script>
 </body>
