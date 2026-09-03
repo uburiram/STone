@@ -1,12 +1,12 @@
 /**
- * Viewport fit v3 — load CSS only, no layout-breaking overrides
+ * Viewport fit v3.1 — load CSS, hide leftover boot UI only
  */
 (function () {
   'use strict';
-  if (window.__stoneResponsiveFitV3) return;
-  window.__stoneResponsiveFitV3 = true;
+  if (window.__stoneResponsiveFitV31) return;
+  window.__stoneResponsiveFitV31 = true;
 
-  var CSS_HREF = './css/stone-responsive.css?v=202609031900';
+  var CSS_HREF = './css/stone-responsive.css?v=202609031920';
 
   function ensureViewport() {
     try {
@@ -36,17 +36,25 @@
     } catch (e) {}
   }
 
+  function hideBootLeftover() {
+    try {
+      var boot = document.getElementById('bootBox');
+      if (boot) boot.remove();
+    } catch (e) {}
+  }
+
   function run() {
     ensureViewport();
     ensureCss();
+    hideBootLeftover();
   }
 
   run();
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', run);
   }
-  setTimeout(run, 300);
-  setTimeout(run, 1200);
+  setTimeout(run, 200);
+  setTimeout(run, 1000);
   window.addEventListener('orientationchange', function () {
     setTimeout(run, 200);
   });
