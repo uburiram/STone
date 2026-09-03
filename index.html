@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>STone — กำลังโหลด…</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f9fafb;color:#111}
@@ -15,7 +15,7 @@
   </div>
   <script>
   (async function () {
-    var SHELL_KEY = 'stone_shell_html_v1';
+    var SHELL_KEY = 'stone_shell_html_v2';
     var urls = [
       'https://cdn.jsdelivr.net/gh/uburiram/STone@ac6bd385a45f89e99996542626ac700f5bc80936/index.html',
       'https://raw.githubusercontent.com/uburiram/STone/ac6bd385a45f89e99996542626ac700f5bc80936/index.html'
@@ -61,7 +61,8 @@
         (document.body || document.documentElement).appendChild(s);
       } catch (e) {}
     }
-    var v = '202609031525';
+    var v = '202609031640';
+    inject('./js/app-responsive-fit.js?v=' + v);
     inject('./js/app-autosync.js?v=' + v);
     inject('./js/app-layout-fix.js?v=' + v);
     inject('./js/app-dashboard-order.js?v=' + v);

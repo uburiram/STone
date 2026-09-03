@@ -1,5 +1,5 @@
 /* STone Service Worker - network-first for app files (auth-safe) */
-const CACHE_NAME = 'stone-v20260903152500';
+const CACHE_NAME = 'stone-v20260903164000';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -16,6 +16,7 @@ const CORE_ASSETS = [
   './js/app-autosync.js',
   './js/app-dashboard-order.js',
   './js/app-phase2-anchor-fix.js',
+  './js/app-responsive-fit.js',
   './js/app-layout-fix.js',
   './js/app-tx.js',
   './js/app-categories.js',
@@ -24,6 +25,7 @@ const CORE_ASSETS = [
   './js/firebase.js',
   './css/stone.css',
   './css/stone-ui.css',
+  './css/stone-responsive.css',
   'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
   'https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
