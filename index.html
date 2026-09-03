@@ -2,46 +2,38 @@
 <html lang="th">
 <head>
   <meta charset="UTF-8">
-  <!-- Content-Security-Policy (basic hardening; allows required CDNs + inline handlers) -->
-  <meta http-equiv="Content-Security-Policy" content="
-    default-src 'self';
-    script-src 'self' 'unsafe-inline'
-      https://cdnjs.cloudflare.com
-      https://www.gstatic.com
-      https://apis.google.com
-      https://accounts.google.com
-      https://cdn.jsdelivr.net;
-    style-src 'self' 'unsafe-inline'
-      https://cdnjs.cloudflare.com
-      https://fonts.googleapis.com;
-    font-src 'self' data:
-      https://fonts.gstatic.com
-      https://cdnjs.cloudflare.com
-      https://cdn.jsdelivr.net;
-    img-src 'self' data: blob: https:;
-    connect-src 'self'
-      https://*.googleapis.com
-      https://*.google.com
-      https://*.firebaseio.com
-      https://*.firebaseapp.com
-      https://*.firebasestorage.app
-      https://identitytoolkit.googleapis.com
-      https://securetoken.googleapis.com
-      https://accounts.google.com
-      https://apis.google.com
-      https://cdn.jsdelivr.net
-      https://cdnjs.cloudflare.com
-      https://raw.githubusercontent.com
-      https://github.com
-      https://www.gstatic.com
-      https://*.gstatic.com
-;
-    frame-src https://accounts.google.com https://*.google.com https://*.firebaseapp.com https://appleid.apple.com;
-    worker-src 'self';
-    manifest-src 'self' blob:;
-    object-src 'none';
-    base-uri 'self';
-    form-action 'self';
-  ">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ระบบบันทึกต้นทุน กำไร - STone</title>
+  <title>STone — กำลังกู้หน้า…</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f9fafb;color:#111}
+  .box{text-align:center;padding:1.5rem} .spin{animation:s 1s linear infinite}@keyframes s{to{transform:rotate(360deg)}}</style>
+</head>
+<body>
+  <div class="box">
+    <div class="spin" style="font-size:2rem;display:inline-block">↻</div>
+    <p>กำลังโหลดหน้าแอป STone…</p>
+  </div>
+  <script>
+  (async function () {
+    var urls = [
+      'https://cdn.jsdelivr.net/gh/uburiram/STone@ac6bd385a45f89e99996542626ac700f5bc80936/index.html',
+      'https://raw.githubusercontent.com/uburiram/STone/ac6bd385a45f89e99996542626ac700f5bc80936/index.html'
+    ];
+    var html = null, err = null;
+    for (var i = 0; i < urls.length; i++) {
+      try {
+        var r = await fetch(urls[i], { cache: 'no-store' });
+        if (r.ok) { html = await r.text(); break; }
+      } catch (e) { err = e; }
+    }
+    if (!html) {
+      document.body.innerHTML = '<div class="box"><p>โหลดไม่สำเร็จ — รีเฟรชอีกครั้ง</p><p style="font-size:12px;color:#666">' + (err && err.message ? err.message : '') + '</p></div>';
+      return;
+    }
+    document.open();
+    document.write(html);
+    document.close();
+  })();
+  </script>
+</body>
+</html>
